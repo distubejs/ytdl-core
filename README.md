@@ -25,7 +25,7 @@ ytdl("http://www.youtube.com/watch?v=aqz-KE-bpKQ").pipe(require("fs").createWrit
 
 // Get video info
 ytdl.getBasicInfo("http://www.youtube.com/watch?v=aqz-KE-bpKQ").then(info => {
-  console.log(info.title);
+  console.log(info.videoDetails.title);
 });
 
 // Get video info with download formats
