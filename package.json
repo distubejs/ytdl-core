@@ -1,6 +1,6 @@
 {
     "name": "@ybd-project/ytdl-core",
-    "version": "5.0.8",
+    "version": "5.0.9-dev",
     "description": "YBD Project fork of ytdl-core.",
     "author": "YBD Project",
     "repository": {
@@ -20,7 +20,10 @@
     ],
     "scripts": {
         "build": "rmdir /s /q package && tsc && tsc-alias",
-        "update": "ncu && ncu -u && npm i"
+        "update": "ncu && ncu -u && npm i",
+        "publish:github": "npm publish --registry=https://npm.pkg.github.com",
+        "publish:npm": "npm publish --registry=https://registry.npmjs.org/",
+        "publish:all": "npm run publish:github && npm run publish:npm"
     },
     "dependencies": {
         "http-cookie-agent": "^6.0.5",
