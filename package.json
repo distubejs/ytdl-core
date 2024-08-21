@@ -11,7 +11,7 @@
         "registry": "https://npm.pkg.github.com"
     },
     "engines": {
-        "node": ">=14.0"
+        "node": ">=18.0"
     },
     "main": "./package/YtdlCore.js",
     "types": "./package/YtdlCore.d.ts",
