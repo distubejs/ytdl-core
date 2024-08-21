@@ -111,6 +111,7 @@ const INNERTUBE_CLIENTS = {
             client: {
                 clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
                 clientVersion: '2.0',
+                clientScreen: 'EMBED',
             },
         },
         INNERTUBE_CONTEXT_CLIENT_NAME: 85,

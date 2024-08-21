@@ -4,6 +4,7 @@ type YTDL_ClientData = {
         client: {
             clientName: string;
             clientVersion: string;
+            clientScreen?: string;
             visitorData?: string;
             userAgent?: string;
             osName?: string;
@@ -129,6 +130,7 @@ const INNERTUBE_CLIENTS: Record<YTDL_ClientTypes, YTDL_ClientData> = {
             client: {
                 clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
                 clientVersion: '2.0',
+                clientScreen: 'EMBED',
             },
         },
         INNERTUBE_CONTEXT_CLIENT_NAME: 85,

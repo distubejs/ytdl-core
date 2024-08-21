@@ -315,7 +315,7 @@ async function _getBasicInfo(id, options, isFromGetInfo) {
         options.clients = ['tv_embedded'];
     }
     /* Player Promises and Video Info */
-    const PLAYER_FETCH_PROMISE = Promise.allSettled(options.clients.map((client) => fetchSpecifiedPlayer(client, id, options, { signatureTimestamp: parseInt(SIGNATURE_TIMESTAMP) }))), WATCH_PAGE_INFO = await RETRY_FUNC_PROMISE, VIDEO_INFO = {
+    const PLAYER_FETCH_PROMISE = Promise.allSettled([...options.clients.map((client) => fetchSpecifiedPlayer(client, id, options, { signatureTimestamp: parseInt(SIGNATURE_TIMESTAMP) })),]), WATCH_PAGE_INFO = await RETRY_FUNC_PROMISE, VIDEO_INFO = {
         _watchPageInfo: WATCH_PAGE_INFO,
         related_videos: [],
         videoDetails: {},
@@ -323,7 +323,7 @@ async function _getBasicInfo(id, options, isFromGetInfo) {
         html5Player: null,
         clients: options.clients,
     };
-    const PLAYER_API_RESPONSES = await PLAYER_FETCH_PROMISE, PLAYER_RESPONSES = {}, PLAYER_RESPONSE_ARRAY = [];
+    const PLAYER_API_RESPONSES = [...await PLAYER_FETCH_PROMISE, WEB_CREATOR_RESPONSE], PLAYER_RESPONSES = {}, PLAYER_RESPONSE_ARRAY = [];
     options.clients.forEach((client, i) => {
         if (PLAYER_API_RESPONSES[i].status === 'fulfilled') {
             PLAYER_RESPONSES[client] = PLAYER_API_RESPONSES[i].value;

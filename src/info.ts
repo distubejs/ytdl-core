@@ -438,7 +438,7 @@ async function _getBasicInfo(id: string, options: YTDL_GetInfoOptions, isFromGet
     }
 
     /* Player Promises and Video Info */
-    const PLAYER_FETCH_PROMISE = Promise.allSettled(options.clients.map((client) => fetchSpecifiedPlayer(client, id, options, { signatureTimestamp: parseInt(SIGNATURE_TIMESTAMP) }))),
+    const PLAYER_FETCH_PROMISE = Promise.allSettled([...options.clients.map((client) => fetchSpecifiedPlayer(client, id, options, { signatureTimestamp: parseInt(SIGNATURE_TIMESTAMP) })),]),
         WATCH_PAGE_INFO = await RETRY_FUNC_PROMISE,
         VIDEO_INFO: YTDL_VideoInfo = {
             _watchPageInfo: WATCH_PAGE_INFO,
@@ -449,7 +449,7 @@ async function _getBasicInfo(id: string, options: YTDL_GetInfoOptions, isFromGet
             clients: options.clients,
         } as any;
 
-    const PLAYER_API_RESPONSES = await PLAYER_FETCH_PROMISE,
+    const PLAYER_API_RESPONSES = [...await PLAYER_FETCH_PROMISE, WEB_CREATOR_RESPONSE],
         PLAYER_RESPONSES: YTDL_PlayerResponses = {},
         PLAYER_RESPONSE_ARRAY: Array<YT_YTInitialPlayerResponse> = [];
 

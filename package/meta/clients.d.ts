@@ -4,6 +4,7 @@ type YTDL_ClientData = {
         client: {
             clientName: string;
             clientVersion: string;
+            clientScreen?: string;
             visitorData?: string;
             userAgent?: string;
             osName?: string;
