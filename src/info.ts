@@ -343,6 +343,7 @@ async function fetchSpecifiedPlayer(playerType: YTDL_ClientTypes, videoId: strin
                 user: {
                     lockedSafetyMode: false,
                 },
+                thirdParty: { embedUrl: 'https://www.youtube.com' },
             },
         },
         USER_AGENT = CLIENT.INNERTUBE_CONTEXT.client.userAgent || `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36`,
