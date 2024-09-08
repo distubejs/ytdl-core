@@ -4,3 +4,4 @@ coverage
 .DS_Store
 .idea/*
 yarn.lock
+package-lock.json

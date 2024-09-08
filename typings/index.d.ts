@@ -340,6 +340,7 @@ declare module '@distube/ytdl-core' {
     interface getInfoOptions {
       lang?: string;
       requestCallback?: () => {};
+      rewriteRequest?: (url: string, requestOptions?: Parameters<typeof request>[1]) => {url: string, requestOptions?: Parameters<typeof request>[1]};
       requestOptions?: Parameters<typeof request>[1];
       agent?: Agent;
     }
