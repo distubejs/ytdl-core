@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "http-cookie-agent": "^6.0.6",
+    "https-proxy-agent": "^7.0.5",
     "m3u8stream": "^0.8.6",
     "miniget": "^4.2.3",
     "sax": "^1.4.1",

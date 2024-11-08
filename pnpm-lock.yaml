@@ -11,6 +11,9 @@ importers:
       http-cookie-agent:
         specifier: ^6.0.6
         version: 6.0.6(tough-cookie@4.1.4)(undici@5.28.4)
+      https-proxy-agent:
+        specifier: ^7.0.5
+        version: 7.0.5
       m3u8stream:
         specifier: ^0.8.6
         version: 0.8.6
@@ -68,6 +71,10 @@ packages:
     peerDependenciesMeta:
       undici:
         optional: true
+
+  https-proxy-agent@7.0.5:
+    resolution: {integrity: sha512-1e4Wqeblerz+tMKPIq2EMGiiWW1dIjZOksyHWSUm1rmuvw/how9hBHZ38lAGj5ID4Ik6EdkOw7NmWPy6LAwalw==}
+    engines: {node: '>= 14'}
 
   m3u8stream@0.8.6:
     resolution: {integrity: sha512-LZj8kIVf9KCphiHmH7sbFQTVe4tOemb202fWwvJwR9W5ENW/1hxJN6ksAWGhQgSBSa3jyWhnjKU1Fw1GaOdbyA==}
@@ -148,6 +155,13 @@ snapshots:
       tough-cookie: 4.1.4
     optionalDependencies:
       undici: 5.28.4
+    transitivePeerDependencies:
+      - supports-color
+
+  https-proxy-agent@7.0.5:
+    dependencies:
+      agent-base: 7.1.1
+      debug: 4.3.7
     transitivePeerDependencies:
       - supports-color
 
