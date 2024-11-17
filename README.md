@@ -163,6 +163,7 @@ You can find the API documentation in the [original repo](https://github.com/fen
 - `requestOptions` is now `undici`'s [`RequestOptions`](https://github.com/nodejs/undici#undicirequesturl-options-promise).
 - `agent`: [`ytdl.Agent`](https://github.com/distubejs/ytdl-core/blob/master/typings/index.d.ts#L10-L14)
 - `playerClients`: An array of player clients to use. Accepts `WEB`, `WEB_CREATOR`, `IOS`, and `ANDROID`. Defaults to `["WEB_CREATOR", "IOS"]`.
+- `fetch`: Custom fetch implementation. Defaults to `undici`'s request.
 
 ### `ytdl.createAgent([cookies]): ytdl.Agent`
 
