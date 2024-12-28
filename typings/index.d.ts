@@ -353,7 +353,7 @@ declare module "@distube/ytdl-core" {
       ) => { url: string; requestOptions: Parameters<typeof request>[1] };
       requestOptions?: Parameters<typeof request>[1];
       agent?: Agent;
-      playerClients?: Array<"WEB_CREATOR" | "IOS" | "ANDROID" | "WEB">;
+      playerClients?: Array<"WEB_CREATOR" | "TV" | "IOS" | "ANDROID" | "WEB">;
     }
 
     interface chooseFormatOptions {
