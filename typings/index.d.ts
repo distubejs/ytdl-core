@@ -351,6 +351,7 @@ declare module "@distube/ytdl-core" {
         url: string,
         requestOptions: Parameters<typeof request>[1],
       ) => { url: string; requestOptions: Parameters<typeof request>[1] };
+      fetch?: (url: string, requestOptions: Parameters<typeof request>[1]) => Promise<Response>;
       requestOptions?: Parameters<typeof request>[1];
       agent?: Agent;
       playerClients?: Array<"WEB_CREATOR" | "IOS" | "ANDROID" | "WEB">;
