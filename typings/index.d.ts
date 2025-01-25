@@ -354,7 +354,7 @@ declare module "@distube/ytdl-core" {
       fetch?: (url: string, requestOptions: Parameters<typeof request>[1]) => Promise<Response>;
       requestOptions?: Parameters<typeof request>[1];
       agent?: Agent;
-      playerClients?: Array<"WEBEMBEDDED" | "TV" | "IOS" | "ANDROID" | "WEB">;
+      playerClients?: Array<"WEB_EMBEDDED" | "TV" | "IOS" | "ANDROID" | "WEB">;
     }
 
     interface chooseFormatOptions {
