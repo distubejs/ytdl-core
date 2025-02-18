@@ -365,7 +365,7 @@ declare module "@distube/ytdl-core" {
         | "lowestaudio"
         | "highestvideo"
         | "lowestvideo"
-        | string
+        | (string & {})
         | number
         | string[]
         | number[];
