@@ -1,5 +1,9 @@
 # @distube/ytdl-core
 
+> [!WARNING]
+> [@distube/youtube](https://github.com/distubejs/extractor-plugins) depends on [youtubei.js](https://github.com/LuanRT/YouTube.js) from now on.
+> This fork will be no longer maintained. Please use alternatives instead.
+
 DisTube fork of `ytdl-core`. This fork is dedicated to fixing bugs and adding features that are not merged into the original repo as soon as possible.
 
 <a href='https://ko-fi.com/skick' target='_blank'><img height='48' src='https://storage.ko-fi.com/cdn/kofi3.png' alt='Buy Me a Coffee at ko-fi.com' /></a>
