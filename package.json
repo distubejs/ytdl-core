@@ -33,13 +33,13 @@
     "prettier": "prettier --write \"**/*.{js,json,yml,md,ts}\""
   },
   "dependencies": {
-    "http-cookie-agent": "^6.0.8",
+    "http-cookie-agent": "^7.0.1",
     "https-proxy-agent": "^7.0.6",
     "m3u8stream": "^0.8.6",
     "miniget": "^4.2.3",
     "sax": "^1.4.1",
     "tough-cookie": "^5.1.0",
-    "undici": "^7.3.0"
+    "undici": "^7.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.12.0",
