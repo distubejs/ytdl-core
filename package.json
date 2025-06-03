@@ -7,7 +7,7 @@
     "download",
     "distube"
   ],
-  "version": "4.16.10",
+  "version": "4.16.11",
   "repository": {
     "type": "git",
     "url": "git://github.com/distubejs/ytdl-core.git"
