@@ -7,7 +7,7 @@ If you wish to contribute to @distube/ytdl-core, feel free to fork the repositor
 ## Setup
 
 1. Fork & clone the repository, make sure you are on the correct branch
-2. Run `npm ci`
+2. Install Bun 1.4.3 and run `bun install --frozen-lockfile`
 3. Code your idea
-4. Run `npm run lint` to run ESLint
+4. Run `bun run verify` (oxlint, oxfmt, tsc, tests, build)
 5. [Submit a pull request](https://github.com/distubejs/ytdl-core/pulls) (Make sure you follow the [conventional commit format](https://www.conventionalcommits.org/en/v1.0.0/))
