@@ -6,5 +6,5 @@ export { chooseFormat } from "./formats.ts";
 export { parseVideoId } from "./url.ts";
 export { YtdlError, YtdlErrorCode } from "./errors.ts";
 export type { AttemptRecord } from "./errors.ts";
-export { Client } from "./clients.ts";
+export { Client, DEFAULT_CLIENTS } from "./clients.ts";
 export * from "./types.ts";
