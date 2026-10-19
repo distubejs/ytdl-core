@@ -1,0 +1,9 @@
+# Netscape HTTP Cookie File
+# Fake values for tests; no real account.
+
+.youtube.com	TRUE	/	TRUE	4102444800	SAPISID	sapisid-value-aaaa
+#HttpOnly_.youtube.com	TRUE	/	TRUE	4102444800	LOGIN_INFO	login-info-value
+.youtube.com	TRUE	/	TRUE	4102444800	__Secure-3PAPISID	three-p-value-cccc
+www.youtube.com	FALSE	/	FALSE	0	PREF	hl=en
+.google.com	TRUE	/	TRUE	4102444800	SID	google-sid-value
+.notyoutube.com	TRUE	/	TRUE	4102444800	X	y

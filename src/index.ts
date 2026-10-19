@@ -1,7 +1,8 @@
 /**
- * Format selection, PO tokens, errors and every public type.
+ * `Ytdl`, format selection, PO tokens, errors and every public type.
  * @module ytdl-core
  */
+export { Ytdl } from "./ytdl.ts";
 export { chooseFormat } from "./formats.ts";
 export { parseVideoId } from "./url.ts";
 export { YtdlError, YtdlErrorCode } from "./errors.ts";

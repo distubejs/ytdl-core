@@ -1,0 +1,3 @@
+# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	4102444800	VISITOR_INFO1_LIVE	visitor-value
+www.youtube.com	FALSE	/	FALSE	0	PREF	hl=en
