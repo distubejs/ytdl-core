@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "node"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "ignorePatterns": ["dist", "coverage", "tests/fixtures", "docs/.astro", "docs/src/content/docs/api"],
+  "rules": {
+    "unicorn/require-post-message-target-origin": "off"
+  }
+}

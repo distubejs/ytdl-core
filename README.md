@@ -28,12 +28,12 @@ const ytdl = require("@distube/ytdl-core");
 ytdl("http://www.youtube.com/watch?v=aqz-KE-bpKQ").pipe(require("fs").createWriteStream("video.mp4"));
 
 // Get video info
-ytdl.getBasicInfo("http://www.youtube.com/watch?v=aqz-KE-bpKQ").then(info => {
+ytdl.getBasicInfo("http://www.youtube.com/watch?v=aqz-KE-bpKQ").then((info) => {
   console.log(info.videoDetails.title);
 });
 
 // Get video info with download formats
-ytdl.getInfo("http://www.youtube.com/watch?v=aqz-KE-bpKQ").then(info => {
+ytdl.getInfo("http://www.youtube.com/watch?v=aqz-KE-bpKQ").then((info) => {
   console.log(info.formats);
 });
 ```

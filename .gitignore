@@ -1,7 +1,7 @@
 node_modules
+dist
 coverage
-.nyc_output
 .DS_Store
-.idea/*
-yarn.lock
-package-lock.json
+
+# Live-check credentials (bun --env-file=.env.live run test:live)
+.env*

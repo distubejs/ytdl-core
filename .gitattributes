@@ -1,2 +1,1 @@
-test/files/html5player/*.js linguist-detectable=false
-test/files/videos/**/* linguist-detectable=false
+tests/fixtures/** linguist-generated=true
