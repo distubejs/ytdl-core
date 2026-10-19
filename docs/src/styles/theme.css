@@ -1,0 +1,178 @@
+@font-face {
+  font-family: "Figtree";
+  font-weight: 400;
+  font-display: optional;
+  src: url("/fonts/figtree-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Figtree";
+  font-weight: 600;
+  font-display: optional;
+  src: url("/fonts/figtree-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "League Spartan";
+  font-weight: 700;
+  font-display: optional;
+  src: url("/fonts/league-spartan-latin.woff2") format("woff2");
+}
+
+:root {
+  --yt-bg: #0f0f0f;
+  --yt-surface: #1c1c1c;
+  --yt-surface-2: #272727;
+  --yt-ink: #f1f1f1;
+  --yt-muted: #aaaaaa;
+  --yt-accent: #d9002b;
+  --yt-accent-deep: #6e0016;
+  --yt-accent-ink: #ffffff;
+  --yt-accent-text: #ff6b81;
+
+  --yt-display: "League Spartan", var(--sl-font-system);
+  --yt-text: "Figtree", var(--sl-font-system);
+  --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+  --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+  --step-lead: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem);
+  --step-head: clamp(2rem, 1.3rem + 2.6vw, 3.5rem);
+  --step-display: clamp(2.5rem, 0.6rem + 4.8vw, 6rem);
+  --yt-margin: clamp(1.25rem, 3vw, 2.5rem);
+  --yt-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --sl-font: var(--yt-text);
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #f1f1f1;
+  --sl-color-gray-2: #d0d0d0;
+  --sl-color-gray-3: #aaaaaa;
+  --sl-color-gray-4: #717171;
+  --sl-color-gray-5: #3d3d3d;
+  --sl-color-gray-6: #1c1c1c;
+  --sl-color-black: #0f0f0f;
+  --sl-color-accent-low: #3d0010;
+  --sl-color-accent: #d9002b;
+  --sl-color-accent-high: #ff9aa9;
+}
+
+:root[data-theme="light"] {
+  --yt-bg: #ffffff;
+  --yt-surface: #f2f2f2;
+  --yt-surface-2: #e5e5e5;
+  --yt-ink: #0f0f0f;
+  --yt-muted: #606060;
+  --yt-accent-deep: #6e0016;
+  --yt-accent-text: #c00026;
+
+  --sl-color-white: #0f0f0f;
+  --sl-color-gray-1: #1c1c1c;
+  --sl-color-gray-2: #303030;
+  --sl-color-gray-3: #606060;
+  --sl-color-gray-4: #909090;
+  --sl-color-gray-5: #cfcfcf;
+  --sl-color-gray-6: #f2f2f2;
+  --sl-color-gray-7: #f8f8f8;
+  --sl-color-black: #ffffff;
+  --sl-color-accent-low: #ffd6dd;
+  --sl-color-accent: #d9002b;
+  --sl-color-accent-high: #8f001c;
+}
+
+@view-transition {
+  navigation: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
+}
+
+.sl-markdown-content :is(h1, h2, h3),
+h1#_top {
+  font-family: var(--yt-display);
+  letter-spacing: -0.02em;
+}
+
+html[data-has-hero] .content-panel {
+  padding: 0;
+}
+
+html[data-has-hero] .sl-container {
+  max-width: none;
+}
+
+html[data-has-hero] .sl-container > * {
+  margin-top: 0;
+}
+
+html[data-has-hero] .sl-container > footer {
+  display: none;
+}
+
+html[data-has-hero] header.header {
+  border-bottom-color: transparent;
+}
+
+.yt-hero {
+  font-family: var(--yt-text);
+  color: var(--yt-ink);
+  font-size: var(--step-body);
+  line-height: 1.5;
+}
+
+.yt-hero :where(h1, h2, h3) {
+  font-family: var(--yt-display);
+  font-weight: 700;
+  color: var(--yt-ink);
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin: 0;
+}
+
+.yt-hero :where(p) {
+  margin: 0;
+}
+
+.yt-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  min-height: 3rem;
+  padding: 0 1.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--yt-accent);
+  color: var(--yt-accent-ink);
+  font: 600 var(--step-body) / 1 var(--yt-text);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 160ms var(--yt-ease),
+    background-color 160ms var(--yt-ease);
+}
+
+.yt-button:hover {
+  background: #b80024;
+  color: var(--yt-accent-ink);
+}
+
+.yt-button:active {
+  transform: scale(0.97);
+}
+
+.yt-button:focus-visible,
+.yt-hero :focus-visible {
+  outline: 3px solid var(--yt-accent-text);
+  outline-offset: 3px;
+}
+
+.yt-link {
+  color: var(--yt-ink);
+  font-weight: 600;
+  text-underline-offset: 0.25em;
+  transition: color 160ms var(--yt-ease);
+}
+
+.yt-link:hover {
+  color: var(--yt-accent-text);
+}

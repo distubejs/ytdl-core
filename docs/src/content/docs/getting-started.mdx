@@ -1,0 +1,64 @@
+---
+title: Getting started
+description: Install ytdl-core and download your first video.
+---
+
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
+## Install
+
+<Tabs syncKey="package-manager">
+  <TabItem label="npm">
+
+```bash
+npm install @distube/ytdl-core
+```
+
+  </TabItem>
+  <TabItem label="bun">
+
+```bash
+bun add @distube/ytdl-core
+```
+
+  </TabItem>
+</Tabs>
+
+ytdl-core runs on Node.js 22.12 or later, and on Bun.
+
+## Download a video
+
+```ts
+import { createWriteStream } from "node:fs";
+import { Filter, Quality, Ytdl } from "@distube/ytdl-core";
+
+const yt = new Ytdl();
+
+yt.download("https://www.youtube.com/watch?v=aqz-KE-bpKQ", {
+  quality: Quality.HighestAudio,
+  filter: Filter.AudioOnly,
+}).pipe(createWriteStream("audio.webm"));
+```
+
+Every method accepts a video ID or any YouTube URL.
+
+## One instance per app
+
+Create one `Ytdl` and reuse it. It keeps the session YouTube gave it, the cookie, and the clients it found blocked, so later lookups are faster and less likely to hit a bot check. Use a separate instance for each account or proxy.
+
+```ts
+const yt = new Ytdl({
+  cookie: process.env.YT_COOKIE,
+  lang: "en",
+  country: "US",
+});
+```
+
+All options are listed in [`YtdlOptions`](../api/interfaces/ytdloptions/).
+
+## Next steps
+
+- [Get info](../guides/info/) about a video
+- [Download](../guides/download/) with ranges, progress and cancellation
+- [Choose a format](../guides/formats/)
+- Pick the [clients](../guides/clients/) to ask
