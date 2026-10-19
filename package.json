@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "bgutils-js": "^4.0.3",
+    "googlevideo": "^5.0.0",
     "jsdom": "^30.1.3",
     "meriyah": "^7.4.0"
   },
