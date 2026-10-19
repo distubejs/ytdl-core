@@ -1,0 +1,53 @@
+name: Publish
+# Tag a verified commit with its package.json version (for example `5.0.0`). CI verifies, packs and
+# publishes it with provenance, then deprecates older versions; a prerelease goes to the `next` tag.
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+jobs:
+  publish:
+    name: Verify, pack and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      # npm publish is the only publisher that supports --provenance (oven-sh/bun#15601).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check the tag matches package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
+          if [[ "$TAG" != "$version" ]]; then
+            echo "Tag $TAG does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run verify
+
+      - run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public --tag next
+          else
+            npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public
+            npm deprecate "@distube/ytdl-core@<$TAG" "This version is deprecated, please upgrade to the latest version."
+          fi
