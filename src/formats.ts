@@ -1,0 +1,231 @@
+import type { Client } from "./clients.ts";
+import { YtdlError } from "./errors.ts";
+import { at, isRecord, type Json, num, str } from "./json.ts";
+import type { ChooseFormatOptions, Filter, FormatMetadata, VideoFormat } from "./types.ts";
+
+export interface SabrSource {
+  /** `serverAbrStreamingUrl` with `n` solved. */
+  readonly url: string;
+  /** `videoPlaybackUstreamerConfig`. */
+  readonly config: string;
+  readonly formats: readonly Json[];
+}
+
+export interface RawFormat {
+  readonly metadata: FormatMetadata;
+  readonly url: string | undefined;
+  readonly signatureCipher: string | undefined;
+}
+
+// Muxed itags carry no audio bitrate field; these are YouTube's fixed values.
+export const MUXED_AUDIO_KBPS: Readonly<Record<number, number>> = {
+  18: 96,
+  22: 192,
+  91: 48,
+  92: 48,
+  93: 128,
+  94: 128,
+  95: 256,
+  96: 256,
+};
+
+function splitCodecs(mimeType: string): { container: string; codecs: string; list: string[] } {
+  const [type = "", params = ""] = mimeType.split(";");
+  const container = type.split("/")[1]?.trim() ?? "";
+  const codecs = /codecs="([^"]*)"/u.exec(params)?.[1] ?? "";
+  return {
+    container,
+    codecs,
+    list: codecs
+      .split(",")
+      .map((codec) => codec.trim())
+      .filter(Boolean),
+  };
+}
+
+export const AUDIO_CODEC = /^(?:mp4a|opus|vorbis|ac-3|ec-3|flac|mp3)/u;
+
+export function parseFormat(entry: Json, client: Client, isLive = false): RawFormat | undefined {
+  const itag = num(entry.itag);
+  const mimeType = str(entry.mimeType);
+  if (itag === undefined || mimeType === undefined) return undefined;
+  const { container, codecs, list } = splitCodecs(mimeType);
+  const isVideoType = mimeType.startsWith("video/");
+  const audioCodec = list.find((codec) => AUDIO_CODEC.test(codec));
+  const videoCodec = isVideoType ? list.find((codec) => !AUDIO_CODEC.test(codec)) : undefined;
+  const hasAudio = mimeType.startsWith("audio/") || audioCodec !== undefined;
+  const bitrate = num(entry.averageBitrate) ?? num(entry.bitrate);
+  const track = at(entry, "audioTrack");
+  return {
+    url: str(entry.url),
+    signatureCipher: str(entry.signatureCipher),
+    metadata: {
+      itag,
+      mimeType,
+      container,
+      codecs,
+      videoCodec,
+      audioCodec,
+      bitrate: num(entry.bitrate),
+      audioBitrate: !hasAudio
+        ? undefined
+        : isVideoType
+          ? MUXED_AUDIO_KBPS[itag]
+          : bitrate === undefined
+            ? undefined
+            : Math.round(bitrate / 1000),
+      audioSampleRate: num(entry.audioSampleRate),
+      audioChannels: num(entry.audioChannels),
+      width: num(entry.width),
+      height: num(entry.height),
+      fps: num(entry.fps),
+      qualityLabel: str(entry.qualityLabel),
+      contentLength: num(entry.contentLength),
+      approxDurationMs: num(entry.approxDurationMs),
+      audioTrack: isRecord(track)
+        ? { id: str(track.id) ?? "", name: str(track.displayName) ?? "", isDefault: track.audioIsDefault === true }
+        : undefined,
+      isDrc: entry.isDrc === true,
+      hasAudio,
+      hasVideo: isVideoType,
+      isLive,
+      isHLS: false,
+      client,
+    },
+  };
+}
+
+export function sabrSession(player: Json): SabrSource | undefined {
+  const url = str(at(player, "streamingData", "serverAbrStreamingUrl"));
+  const config = str(
+    at(player, "playerConfig", "mediaCommonConfig", "mediaUstreamerRequestConfig", "videoPlaybackUstreamerConfig"),
+  );
+  const adaptive = at(player, "streamingData", "adaptiveFormats");
+  if (!url || !config || !Array.isArray(adaptive)) return undefined;
+  return { url, config, formats: adaptive.filter(isRecord) };
+}
+
+export function parseFormats(player: Json, client: Client): RawFormat[] {
+  const streaming = at(player, "streamingData");
+  const isLive = at(player, "videoDetails", "isLive") === true;
+  const sabr = !isLive && sabrSession(player) !== undefined;
+  const muxed = at(streaming, "formats");
+  const adaptive = at(streaming, "adaptiveFormats");
+  const entries = [
+    ...(Array.isArray(muxed) ? muxed.map((entry: unknown) => ({ entry, isAdaptive: false })) : []),
+    ...(Array.isArray(adaptive) ? adaptive.map((entry: unknown) => ({ entry, isAdaptive: true })) : []),
+  ];
+  const out: RawFormat[] = [];
+  for (const { entry, isAdaptive } of entries) {
+    if (!isRecord(entry)) continue;
+    if (Array.isArray(entry.drmFamilies) && entry.drmFamilies.length > 0) continue;
+    if (entry.type === "FORMAT_STREAM_TYPE_OTF") continue;
+    const parsed = parseFormat(entry, client, isLive);
+    if (parsed && (parsed.url || parsed.signatureCipher || (sabr && isAdaptive))) out.push(parsed);
+  }
+  return out;
+}
+
+// YouTube's live HLS variants are muxed audio and video.
+const VIDEO_ENCODINGS = ["mp4v", "avc1", "Sorenson H.283", "MPEG-4 Visual", "VP8", "VP9", "vp09", "av01", "H.264"];
+const AUDIO_ENCODINGS = ["mp4a", "mp3", "vorbis", "aac", "opus", "flac"];
+
+type Rank = (format: FormatMetadata) => number;
+const qualityHeight: Rank = (format) => Number.parseInt(format.qualityLabel ?? "", 10) || 0;
+const videoBitrate: Rank = (format) => (format.hasVideo ? (format.bitrate ?? 0) : 0);
+const audioBitrate: Rank = (format) => format.audioBitrate ?? 0;
+const videoEncoding: Rank = (format) => VIDEO_ENCODINGS.findIndex((encoding) => format.codecs.includes(encoding));
+const audioEncoding: Rank = (format) => AUDIO_ENCODINGS.findIndex((encoding) => format.codecs.includes(encoding));
+
+function compare(ranks: readonly Rank[]) {
+  return (a: FormatMetadata, b: FormatMetadata): number => {
+    for (const rank of ranks) {
+      const difference = rank(b) - rank(a);
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  };
+}
+
+const byVideo = compare([qualityHeight, videoBitrate, videoEncoding]);
+const byAudio = compare([audioBitrate, audioEncoding]);
+const sortFormats = compare([
+  (format) => Number(format.contentLength !== undefined && format.contentLength > 0),
+  (format) => Number(format.hasVideo && format.hasAudio),
+  (format) => Number(format.hasVideo),
+  qualityHeight,
+  videoBitrate,
+  audioBitrate,
+  videoEncoding,
+  audioEncoding,
+]);
+
+const FILTERS: Readonly<Record<Exclude<Filter, (format: FormatMetadata) => boolean>, Rank>> = {
+  audioandvideo: (format) => Number(format.hasVideo && format.hasAudio),
+  video: (format) => Number(format.hasVideo),
+  videoonly: (format) => Number(format.hasVideo && !format.hasAudio),
+  audio: (format) => Number(format.hasAudio),
+  audioonly: (format) => Number(format.hasAudio && !format.hasVideo),
+};
+
+export function filterFormats<Format extends FormatMetadata>(
+  formats: readonly Format[],
+  filter: Filter | undefined,
+): Format[] {
+  if (filter === undefined) return [...formats];
+  if (typeof filter === "function") return formats.filter((format) => filter(format));
+  const test = FILTERS[filter];
+  if (!test) throw new YtdlError("INVALID_ARGUMENT", `Unknown filter ${JSON.stringify(filter)}`);
+  return formats.filter((format) => test(format) === 1);
+}
+
+// YouTube gives DRC variants and dubbed tracks the itag of the original.
+export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
+  return a.itag === b.itag && a.isDrc === b.isDrc && a.audioTrack?.id === b.audioTrack?.id;
+}
+
+/**
+ * Filters, then picks by quality. An explicit `format` is matched in `formats`, so a fresh list's
+ * URL replaces a stale one. A DRC variant is picked only when no original matches.
+ */
+export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
+  const wanted = options.format;
+  if (wanted) return formats.find((format) => sameFormat(format, wanted)) ?? wanted;
+  const matching = filterFormats(formats, options.filter);
+  const originals = matching.filter((format) => !format.isDrc);
+  const candidates = originals.length > 0 ? originals : matching;
+  const quality = options.quality ?? "highest";
+  let chosen: VideoFormat | undefined;
+  if (typeof quality === "number") chosen = candidates.find((format) => format.itag === quality);
+  else if (Array.isArray(quality)) {
+    for (const itag of quality) {
+      chosen = candidates.find((format) => format.itag === itag);
+      if (chosen) break;
+    }
+  } else if (quality === "highest" || quality === "lowest") {
+    const sorted = candidates.toSorted(sortFormats);
+    chosen = quality === "highest" ? sorted[0] : sorted.at(-1);
+  } else if (quality === "highestaudio" || quality === "lowestaudio") {
+    const sorted = filterFormats(candidates, "audio").toSorted(byAudio);
+    if (quality === "lowestaudio") chosen = sorted.at(-1);
+    else {
+      const best = sorted[0];
+      chosen =
+        best &&
+        sorted
+          .filter((format) => byAudio(best, format) === 0)
+          .toSorted((a, b) => qualityHeight(a) - qualityHeight(b))[0];
+    }
+  } else if (quality === "highestvideo" || quality === "lowestvideo") {
+    const sorted = filterFormats(candidates, "video").toSorted(byVideo);
+    if (quality === "lowestvideo") chosen = sorted.at(-1);
+    else {
+      const best = sorted[0];
+      chosen =
+        best &&
+        sorted.filter((format) => byVideo(best, format) === 0).toSorted((a, b) => audioBitrate(a) - audioBitrate(b))[0];
+    }
+  }
+  if (!chosen) throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
+  return chosen;
+}
