@@ -1,50 +1,5 @@
-import { at, isRecord, type Json, num, str, text } from "./json.ts";
-import type { Author, Chapter, RelatedVideo, Storyboard, Thumbnail, VideoDetails, VideoInfo } from "./types.ts";
-
-// InnerTube moves renderers between paths on client updates, so parsers look them up by name.
-function collect(value: unknown, key: string, found: Json[] = []): Json[] {
-  if (Array.isArray(value)) {
-    for (const item of value) collect(item, key, found);
-  } else if (isRecord(value)) {
-    for (const [name, child] of Object.entries(value)) {
-      if (name === key && isRecord(child)) found.push(child);
-      else collect(child, key, found);
-    }
-  }
-  return found;
-}
-
-function thumbnails(value: unknown): Thumbnail[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    const url = str(at(item, "url"));
-    return url
-      ? [
-          {
-            url: url.startsWith("//") ? `https:${url}` : url,
-            width: num(at(item, "width")),
-            height: num(at(item, "height")),
-          },
-        ]
-      : [];
-  });
-}
-
-function parseAbbreviated(input: string | undefined): number | undefined {
-  const match = input?.replace(/,/gu, "").match(/([\d.]+)\s*([KMB])?/iu);
-  if (!match?.[1]) return undefined;
-  const base = Number(match[1]);
-  const scale = { K: 1e3, M: 1e6, B: 1e9 }[(match[2] ?? "").toUpperCase() as "K" | "M" | "B"] ?? 1;
-  return Number.isFinite(base) ? Math.round(base * scale) : undefined;
-}
-
-function parseClock(input: string | undefined): number | undefined {
-  if (!input || !/^\d+(?::\d+){0,2}$/u.test(input.trim())) return undefined;
-  return input
-    .trim()
-    .split(":")
-    .reduce((total, part) => total * 60 + Number(part), 0);
-}
+import { at, collect, type Json, num, parseAbbreviated, parseClock, str, text, thumbnails } from "./json.ts";
+import type { Author, Chapter, RelatedVideo, Storyboard, VideoDetails, VideoInfo } from "./types.ts";
 
 function author(player: Json, next: Json): Author {
   const details = at(player, "videoDetails");
