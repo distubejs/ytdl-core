@@ -107,6 +107,18 @@ describe.skipIf(!LIVE)("real YouTube", () => {
   test("Short", () => plays("short", yt, VIDEOS.short), TIMEOUT);
   test("made-for-kids video", () => plays("kids", yt, VIDEOS.kids), TIMEOUT);
 
+  test(
+    "a captioned video lists tracks and returns WebVTT",
+    async () => {
+      const info = await yt.getInfo(VIDEOS.short);
+      expect(info.captionTracks.length).toBeGreaterThan(0);
+      const text = await yt.getCaptions(info);
+      expect(text).toStartWith("WEBVTT");
+      rows.push(`  captions ${VIDEOS.short}: ${info.client}, ${info.captionTracks.length} tracks`);
+    },
+    TIMEOUT,
+  );
+
   async function streams(label: string, filter: (format: FormatMetadata) => boolean): Promise<void> {
     const info = await yt.getInfo(VIDEOS.live);
     expect(info.videoDetails.isLive).toBe(true);

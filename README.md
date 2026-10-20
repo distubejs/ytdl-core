@@ -9,6 +9,7 @@ YouTube video info and downloads for Node.js. A DisTube fork of `ytdl-core`.
 ## Features
 
 - Video details, chapters, storyboards, related videos and every format
+- Caption tracks as WebVTT, JSON or XML text
 - Node `Readable` and web `ReadableStream` downloads, with byte ranges
 - Downloads that resume on their own when YouTube cuts a URL off
 - Live streams over HLS or DASH

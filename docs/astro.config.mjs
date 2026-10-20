@@ -33,6 +33,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             "guides/info",
+            "guides/captions",
             "guides/download",
             "guides/formats",
             "guides/live",

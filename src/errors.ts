@@ -31,6 +31,8 @@ export const YtdlErrorCode = {
   RATE_LIMITED: "RATE_LIMITED",
   /** No client returned a playable format, or none matched the options. */
   NO_FORMAT: "NO_FORMAT",
+  /** The video has no caption track in the requested language, or none at all. */
+  NO_CAPTIONS: "NO_CAPTIONS",
   /** The player script could not be solved for signatures. */
   PLAYER_SOLVE_FAILED: "PLAYER_SOLVE_FAILED",
   /** YouTube treats the cookie as signed out. */

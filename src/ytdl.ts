@@ -5,6 +5,7 @@ import { YtdlError } from "./errors.ts";
 import { createNodeStream, createWebStream, type DeliveryInput, type ResumeRequest } from "./delivery/index.ts";
 import { chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
+import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import { basicInfo, type InfoBase } from "./info.ts";
 import { fetchText } from "./http.ts";
 import { requestNext, requestWebMetadata, resolveChannelLive } from "./innertube.ts";
@@ -17,7 +18,15 @@ import {
   resolvePlayback,
   type ResolverState,
 } from "./resolve.ts";
-import type { DownloadOptions, LookupOptions, VideoFormat, VideoInfo, YtdlOptions } from "./types.ts";
+import {
+  CaptionFormat,
+  type CaptionOptions,
+  type DownloadOptions,
+  type LookupOptions,
+  type VideoFormat,
+  type VideoInfo,
+  type YtdlOptions,
+} from "./types.ts";
 import { getVideoTarget, type VideoTarget } from "./url.ts";
 
 /**
@@ -88,6 +97,28 @@ export class Ytdl {
     return createWebStream((signal) => this.#prepare(target, video, options, signal), options);
   }
 
+  /**
+   * YouTube's own text for one caption track, not parsed into cues. The format is `CaptionFormat.Vtt` unless
+   * `format` says otherwise. `lang` must equal a track's `languageCode`, so `de` does not match `de-DE`.
+   * YouTube's timedtext endpoint answers HTTP 429 after a few quick requests from one IP, which rejects with
+   * `RATE_LIMITED` and is not retried, so cache the text.
+   */
+  async getCaptions(video: string | VideoInfo, options: CaptionOptions = {}): Promise<string> {
+    const { signal } = options;
+    checkFormat(options.format);
+    const info =
+      this.#unexpired(video) ??
+      (await this.getInfo(typeof video === "string" ? video : video.videoDetails.id, { signal }));
+    signal?.throwIfAborted();
+    const track = chooseTrack(info.captionTracks, options.lang);
+    const url = captionUrl(track, options.format ?? CaptionFormat.Vtt);
+    return fetchText(this.#state.fetch, url, { headers: userAgentHeader(info.client), signal }, "YouTube captions");
+  }
+
+  #unexpired(video: string | VideoInfo): VideoInfo | undefined {
+    return typeof video !== "string" && video.expiresAt > Date.now() + 60_000 ? video : undefined;
+  }
+
   #videoId(target: VideoTarget, signal: AbortSignal | undefined): Promise<string> | string {
     return "id" in target ? target.id : resolveChannelLive(requestContext(this.#state, signal), target.channelLive);
   }
@@ -99,8 +130,7 @@ export class Ytdl {
     signal: AbortSignal,
   ): Promise<DeliveryInput> {
     const id = await this.#videoId(target, signal);
-    const fresh = typeof video !== "string" && video.expiresAt > Date.now() + 60_000;
-    let info = fresh ? video : await this.getInfo(id, { signal });
+    let info = this.#unexpired(video) ?? (await this.getInfo(id, { signal }));
     let format = chooseFormat(info.formats, options);
     if (format.url === undefined && !this.#lookups.get(info)?.sabr) {
       info = await this.getInfo(id, { signal });
@@ -151,6 +181,7 @@ export class Ytdl {
       videoDetails: basic.videoDetails,
       relatedVideos: basic.relatedVideos,
       playerResponse: basic.playerResponse,
+      captionTracks: basic.captionTracks,
       formats,
       client: resolution.client,
       hlsManifestUrl: resolution.hlsManifestUrl,

@@ -17,6 +17,8 @@ try {
 }
 ```
 
+`getCaptions` rejects with `NO_CAPTIONS` when the video has no track in the language you asked for, and the message lists the languages it has.
+
 A download stream emits the same errors as an `error` event, or rejects its reads for a web stream.
 
 Every code and what it means is listed in [`YtdlErrorCode`](../../api/enumerations/ytdlerrorcode/).
