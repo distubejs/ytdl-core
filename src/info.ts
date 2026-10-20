@@ -1,5 +1,6 @@
+import { relatedVideos } from "./discovery.ts";
 import { at, collect, type Json, list, num, parseAbbreviated, parseClock, str, text, thumbnails } from "./json.ts";
-import type { Author, CaptionTrack, Chapter, Storyboard, VideoDetails, VideoInfo, VideoSummary } from "./types.ts";
+import type { Author, CaptionTrack, Chapter, Storyboard, VideoDetails, VideoInfo } from "./types.ts";
 
 function author(player: Json, next: Json): Author {
   const details = at(player, "videoDetails");
@@ -69,58 +70,6 @@ function likes(next: Json): number | undefined {
     }
   }
   return undefined;
-}
-
-function relatedVideos(next: Json): VideoSummary[] {
-  const seen = new Set<string>();
-  const out: VideoSummary[] = [];
-  const add = (video: VideoSummary) => {
-    if (seen.has(video.id)) return;
-    seen.add(video.id);
-    out.push(video);
-  };
-  for (const renderer of collect(next, "compactVideoRenderer")) {
-    const id = str(at(renderer, "videoId"));
-    const title = text(at(renderer, "title"));
-    if (!id || !title) continue;
-    const byline = at(renderer, "longBylineText", "runs", 0);
-    add({
-      id,
-      title,
-      author: {
-        id: str(at(byline, "navigationEndpoint", "browseEndpoint", "browseId")),
-        name: text(at(renderer, "longBylineText")),
-      },
-      lengthSeconds: parseClock(text(at(renderer, "lengthText"))),
-      viewCount: parseAbbreviated(text(at(renderer, "viewCountText"))),
-      thumbnails: thumbnails(at(renderer, "thumbnail", "thumbnails")),
-      isLive: collect(renderer, "metadataBadgeRenderer").some((badge) => /LIVE/u.test(String(at(badge, "style")))),
-    });
-  }
-  for (const lockup of collect(next, "lockupViewModel")) {
-    if (at(lockup, "contentType") !== "LOCKUP_CONTENT_TYPE_VIDEO") continue;
-    const id = str(at(lockup, "contentId"));
-    const metadata = at(lockup, "metadata", "lockupMetadataViewModel");
-    const title = text(at(metadata, "title"));
-    if (!id || !title) continue;
-    const badges = collect(lockup, "thumbnailBadgeViewModel").map((badge) => str(at(badge, "text")) ?? "");
-    // Rows are [channel] then [views, age]; the views part has no "views" word for music.
-    const rows = at(metadata, "metadata", "contentMetadataViewModel", "metadataRows");
-    const part = (row: number, index: number) => text(at(rows, row, "metadataParts", index, "text"));
-    add({
-      id,
-      title,
-      author: {
-        id: str(collect(at(metadata, "image"), "browseEndpoint").map((endpoint) => at(endpoint, "browseId"))[0]),
-        name: part(0, 0),
-      },
-      lengthSeconds: badges.map(parseClock).find((value) => value !== undefined),
-      viewCount: parseAbbreviated(part(1, 0)),
-      thumbnails: thumbnails(at(lockup, "contentImage", "thumbnailViewModel", "image", "sources")),
-      isLive: badges.some((badge) => /^live$/iu.test(badge)),
-    });
-  }
-  return out;
 }
 
 interface DetailsContext {

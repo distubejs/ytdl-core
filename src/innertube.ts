@@ -43,7 +43,7 @@ interface InnertubeRequest {
 
 async function innertube(
   context: RequestContext,
-  endpoint: "player" | "next" | "navigation/resolve_url",
+  endpoint: "player" | "next" | "navigation/resolve_url" | "search" | "browse",
   identity: Identity,
   request: InnertubeRequest,
 ): Promise<Json> {
@@ -154,6 +154,31 @@ export function requestPlayer(context: RequestContext, request: PlayerRequest): 
 
 export function requestNext(context: RequestContext, videoId: string, visitorData: string | undefined): Promise<Json> {
   return innertube(context, "next", CLIENTS.web, { videoId, visitorData });
+}
+
+// Search params `EgIQAQ==` select the "Videos" type filter.
+const VIDEOS_ONLY = "EgIQAQ%3D%3D";
+
+export function requestSearch(
+  context: RequestContext,
+  page: { readonly query: string } | { readonly continuation: string },
+  visitorData: string,
+): Promise<Json> {
+  return innertube(context, "search", CLIENTS.web, {
+    visitorData,
+    body: "query" in page ? { query: page.query, params: VIDEOS_ONLY } : { continuation: page.continuation },
+  });
+}
+
+export function requestBrowse(
+  context: RequestContext,
+  page: { readonly playlistId: string } | { readonly continuation: string },
+  visitorData: string,
+): Promise<Json> {
+  return innertube(context, "browse", CLIENTS.web, {
+    visitorData,
+    body: "playlistId" in page ? { browseId: `VL${page.playlistId}` } : { continuation: page.continuation },
+  });
 }
 
 // Only `microformat` is read: the WEB formats are SABR-only and the playback clients omit it.

@@ -24,6 +24,8 @@ const VIDEOS = {
   kids: "wZK2xTNzgq8", // NASA Space Place, made for kids: VISIONOS lists no formats
   live: "https://www.youtube.com/@NASA/live",
 } as const;
+const SEARCH_QUERY = "blender open movie";
+const PLAYLIST = "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"; // NASA, Perseverance Mars Rover, over 100 entries
 
 const rows: string[] = [];
 afterAll(() => {
@@ -115,6 +117,53 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       const text = await yt.getCaptions(info);
       expect(text).toStartWith("WEBVTT");
       rows.push(`  captions ${VIDEOS.short}: ${info.client}, ${info.captionTracks.length} tracks`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery search returns videos",
+    async () => {
+      const [found] = await yt.search(SEARCH_QUERY, { limit: 5 });
+      expect(found?.id).toMatch(/^[\w-]{11}$/u);
+      expect(found?.title).toBeString();
+      rows.push(`  search "${SEARCH_QUERY}": first ${found?.id}`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery playlist returns entries across pages",
+    async () => {
+      const playlist = await yt.getPlaylist(PLAYLIST);
+      expect(playlist.videos.length).toBeGreaterThan(100);
+      rows.push(`  playlist ${PLAYLIST}: ${playlist.videos.length} entries`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery related videos come without a player lookup",
+    async () => {
+      const urls: string[] = [];
+      const counting = ((input: string | URL | Request, init?: RequestInit) => {
+        urls.push(String(input instanceof Request ? input.url : input));
+        return fetch(input, init);
+      }) as typeof fetch;
+      const related = await new Ytdl({ fetch: counting }).getRelated(VIDEOS.normal);
+      expect(related.length).toBeGreaterThan(0);
+      expect(urls.filter((url) => url.includes("/youtubei/v1/player"))).toEqual([]);
+      rows.push(`  related ${VIDEOS.normal}: ${related.length} videos`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery suggestions return completions",
+    async () => {
+      const suggestions = await yt.getSuggestions(SEARCH_QUERY);
+      expect(suggestions.length).toBeGreaterThan(0);
+      rows.push(`  suggestions "${SEARCH_QUERY}": ${suggestions.length}`);
     },
     TIMEOUT,
   );

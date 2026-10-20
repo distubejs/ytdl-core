@@ -16,6 +16,8 @@ info.relatedVideos;
 
 Fields YouTube leaves out are `undefined`, and missing lists are empty.
 
+`relatedVideos` holds [`VideoSummary`](../../api/interfaces/videosummary/) values. To get them without a player lookup, call [`getRelated`](../search/#related-videos).
+
 Everything `getInfo` returns is listed in [`VideoInfo`](../../api/interfaces/videoinfo/), [`VideoDetails`](../../api/interfaces/videodetails/) and [`VideoFormat`](../../api/interfaces/videoformat/).
 
 A format whose `url` is `undefined` is served only through SABR. `download` still streams it.

@@ -47,6 +47,11 @@ export interface LookupOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface ListOptions extends LookupOptions {
+  /** Stops collecting at this many videos; a positive integer. */
+  readonly limit?: number;
+}
+
 /**
  * Named format qualities for `chooseFormat` and `download`.
  * @enum
@@ -167,6 +172,16 @@ export interface VideoSummary {
   readonly viewCount: number | undefined;
   readonly thumbnails: readonly Thumbnail[];
   readonly isLive: boolean;
+}
+
+export interface PlaylistInfo {
+  readonly id: string;
+  readonly url: string;
+  readonly title: string | undefined;
+  readonly author: VideoSummary["author"];
+  readonly thumbnails: readonly Thumbnail[];
+  /** Entries in playlist order, without the ones YouTube marks unplayable. */
+  readonly videos: readonly VideoSummary[];
 }
 
 export interface VideoDetails {

@@ -34,6 +34,7 @@ export default defineConfig({
           items: [
             "guides/info",
             "guides/captions",
+            "guides/search",
             "guides/download",
             "guides/formats",
             "guides/live",

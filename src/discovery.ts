@@ -1,0 +1,267 @@
+import { userAgentHeader } from "./clients.ts";
+import { YtdlError } from "./errors.ts";
+import { fetchText } from "./http.ts";
+import { type RequestContext, requestBrowse, requestSearch } from "./innertube.ts";
+import {
+  at,
+  collect,
+  isRecord,
+  type Json,
+  list,
+  num,
+  parseAbbreviated,
+  parseClock,
+  str,
+  text,
+  thumbnails,
+} from "./json.ts";
+import type { PlaylistInfo, VideoSummary } from "./types.ts";
+
+const SUGGEST_URL = "https://suggestqueries-clients6.youtube.com/complete/search";
+const SUMMARY_KINDS = ["videoRenderer", "compactVideoRenderer", "playlistVideoRenderer", "lockupViewModel"];
+
+export function checkQuery(query: string): void {
+  if (typeof query !== "string" || query.trim() === "") {
+    throw new YtdlError("INVALID_ARGUMENT", "query must be a non-empty string");
+  }
+}
+
+export function checkLimit(limit: number | undefined): number | undefined {
+  if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
+    throw new YtdlError("INVALID_ARGUMENT", "limit must be a positive integer");
+  }
+  return limit;
+}
+
+function byline(value: unknown): VideoSummary["author"] {
+  return { id: str(at(value, "runs", 0, "navigationEndpoint", "browseEndpoint", "browseId")), name: text(value) };
+}
+
+function rendererSummary(renderer: Json): VideoSummary | undefined {
+  const id = str(at(renderer, "videoId"));
+  const title = text(at(renderer, "title"));
+  if (!id || !title || at(renderer, "isPlayable") === false) return undefined;
+  const isLive =
+    collect(renderer, "metadataBadgeRenderer").some((badge) => /LIVE/u.test(String(at(badge, "style")))) ||
+    collect(renderer, "thumbnailOverlayTimeStatusRenderer").some((overlay) => at(overlay, "style") === "LIVE");
+  return {
+    id,
+    title,
+    author: byline(at(renderer, "ownerText") ?? at(renderer, "longBylineText") ?? at(renderer, "shortBylineText")),
+    lengthSeconds: isLive
+      ? undefined
+      : (num(at(renderer, "lengthSeconds")) ?? parseClock(text(at(renderer, "lengthText")))),
+    viewCount: parseAbbreviated(text(at(renderer, "viewCountText")) ?? text(at(renderer, "shortViewCountText"))),
+    thumbnails: thumbnails(at(renderer, "thumbnail", "thumbnails")),
+    isLive,
+  };
+}
+
+function lockupSummary(lockup: Json): VideoSummary | undefined {
+  if (at(lockup, "contentType") !== "LOCKUP_CONTENT_TYPE_VIDEO") return undefined;
+  const id = str(at(lockup, "contentId"));
+  const metadata = at(lockup, "metadata", "lockupMetadataViewModel");
+  const title = text(at(metadata, "title"));
+  if (!id || !title) return undefined;
+  const badges = collect(lockup, "thumbnailBadgeViewModel").map((badge) => str(at(badge, "text")) ?? "");
+  // Rows are [channel] then [views, age]; the views part has no "views" word for music.
+  const rows = at(metadata, "metadata", "contentMetadataViewModel", "metadataRows");
+  const part = (row: number, index: number) => text(at(rows, row, "metadataParts", index, "text"));
+  return {
+    id,
+    title,
+    author: {
+      id: str(collect(at(metadata, "image"), "browseEndpoint").map((endpoint) => at(endpoint, "browseId"))[0]),
+      name: part(0, 0),
+    },
+    lengthSeconds: badges.map(parseClock).find((value) => value !== undefined),
+    viewCount: parseAbbreviated(part(1, 0)),
+    thumbnails: thumbnails(at(lockup, "contentImage", "thumbnailViewModel", "image", "sources")),
+    isLive: badges.some((badge) => /^live$/iu.test(badge)),
+  };
+}
+
+function summary(kind: string, value: Json): VideoSummary | undefined {
+  return kind === "lockupViewModel" ? lockupSummary(value) : rendererSummary(value);
+}
+
+function summaries(value: unknown, found: VideoSummary[] = []): VideoSummary[] {
+  if (Array.isArray(value)) {
+    for (const item of value) summaries(item, found);
+  } else if (isRecord(value)) {
+    for (const [name, child] of Object.entries(value)) {
+      if (SUMMARY_KINDS.includes(name) && isRecord(child)) {
+        const video = summary(name, child);
+        if (video) found.push(video);
+      } else summaries(child, found);
+    }
+  }
+  return found;
+}
+
+// Shelves nest videos inside a result, so only the section's own entries count.
+function searchResults(page: Json): VideoSummary[] {
+  return collect(page, "itemSectionRenderer").flatMap((section) =>
+    list(at(section, "contents")).flatMap((item) =>
+      SUMMARY_KINDS.flatMap((kind) => {
+        const value = at(item, kind);
+        const video = isRecord(value) ? summary(kind, value) : undefined;
+        return video ? [video] : [];
+      }),
+    ),
+  );
+}
+
+function withoutRepeats(videos: readonly VideoSummary[], seen = new Set<string>()): VideoSummary[] {
+  return videos.filter((video) => {
+    if (seen.has(video.id)) return false;
+    seen.add(video.id);
+    return true;
+  });
+}
+
+export function relatedVideos(next: Json): VideoSummary[] {
+  return withoutRepeats(summaries(next));
+}
+
+const appended = (page: Json) =>
+  collect(page, "appendContinuationItemsAction").map((action) => list(at(action, "continuationItems")));
+
+const searchLists = (page: Json) => [
+  ...collect(page, "sectionListRenderer").map((section) => list(at(section, "contents"))),
+  ...appended(page),
+];
+// A playlist page also carries a section-level continuation for recommendations, so only the entry list's own counts.
+const playlistLists = (page: Json) => [
+  ...[...collect(page, "itemSectionRenderer"), ...collect(page, "playlistVideoListRenderer")].map((section) =>
+    list(at(section, "contents")),
+  ),
+  ...appended(page),
+];
+
+function continuation(lists: readonly (readonly unknown[])[]): string | undefined {
+  return lists
+    .flat()
+    .map(
+      (item) =>
+        str(at(item, "continuationItemRenderer", "continuationEndpoint", "continuationCommand", "token")) ??
+        str(
+          at(
+            item,
+            "continuationItemViewModel",
+            "continuationCommand",
+            "innertubeCommand",
+            "continuationCommand",
+            "token",
+          ),
+        ),
+    )
+    .find((token) => token !== undefined);
+}
+
+// 5000 playlist entries at 100 a page is 50 pages; raise this if YouTube lifts that cap.
+const MAX_PAGES = 60;
+
+interface Paging {
+  readonly first: Json;
+  readonly more: (continuation: string) => Promise<Json>;
+  readonly entries: (page: Json) => readonly VideoSummary[];
+  readonly lists: (page: Json) => readonly (readonly unknown[])[];
+  readonly limit: number;
+  readonly unique: boolean;
+  readonly signal: AbortSignal | undefined;
+}
+
+async function collectPages({ first, more, entries, lists, limit, unique, signal }: Paging): Promise<VideoSummary[]> {
+  const videos: VideoSummary[] = [];
+  const seen = new Set<string>();
+  const followed = new Set<string>();
+  for (let page = first, pages = 1; ; pages++) {
+    videos.push(...(unique ? withoutRepeats(entries(page), seen) : entries(page)));
+    const token = continuation(lists(page));
+    if (videos.length >= limit || !token || followed.has(token)) return videos.slice(0, limit);
+    if (pages >= MAX_PAGES) throw new YtdlError("REQUEST_FAILED", `YouTube offered more than ${MAX_PAGES} pages`);
+    followed.add(token);
+    signal?.throwIfAborted();
+    page = await more(token);
+  }
+}
+
+export async function searchVideos(
+  context: RequestContext,
+  visitorData: string,
+  query: string,
+  limit: number,
+): Promise<VideoSummary[]> {
+  return collectPages({
+    first: await requestSearch(context, { query }, visitorData),
+    more: (token) => requestSearch(context, { continuation: token }, visitorData),
+    entries: searchResults,
+    lists: searchLists,
+    limit,
+    unique: true,
+    signal: context.signal,
+  });
+}
+
+export async function browsePlaylist(
+  context: RequestContext,
+  visitorData: string,
+  id: string,
+  limit: number,
+): Promise<PlaylistInfo> {
+  const first = await requestBrowse(context, { playlistId: id }, visitorData);
+  const metadata = collect(first, "playlistMetadataRenderer")[0];
+  const header = collect(first, "playlistHeaderRenderer")[0];
+  const pageHeader = collect(first, "pageHeaderViewModel")[0];
+  if (!metadata && !header && !pageHeader && summaries(first).length === 0) {
+    throw new YtdlError("NOT_FOUND", `Playlist ${id} does not exist`);
+  }
+  const videos = await collectPages({
+    first,
+    more: (token) => requestBrowse(context, { continuation: token }, visitorData),
+    entries: summaries,
+    lists: playlistLists,
+    limit,
+    unique: false,
+    signal: context.signal,
+  });
+  return {
+    id,
+    url: `https://www.youtube.com/playlist?list=${id}`,
+    title:
+      text(at(metadata, "title")) ??
+      text(at(header, "title")) ??
+      text(at(pageHeader, "title", "dynamicTextViewModel", "text")),
+    author: byline(at(collect(first, "videoOwnerRenderer")[0], "title") ?? at(header, "ownerText")),
+    thumbnails: thumbnails(at(collect(first, "playlistVideoThumbnailRenderer")[0], "thumbnail", "thumbnails")),
+    videos,
+  };
+}
+
+export async function fetchSuggestions(context: RequestContext, query: string): Promise<string[]> {
+  const url = new URL(SUGGEST_URL);
+  url.search = new URLSearchParams({
+    client: "youtube",
+    ds: "yt",
+    hl: context.lang ?? "en",
+    gl: context.country ?? "US",
+    q: query,
+  }).toString();
+  const what = "YouTube suggestions";
+  const body = await fetchText(
+    context.fetch,
+    url.href,
+    { headers: userAgentHeader("web"), signal: context.signal },
+    what,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(/^[^(]*\((.*)\)\s*;?\s*$/su.exec(body)?.[1] ?? "");
+  } catch (cause) {
+    throw new YtdlError("REQUEST_FAILED", `${what} were not JSONP`, { cause });
+  }
+  const entries = at(parsed, 1);
+  if (!Array.isArray(entries)) throw new YtdlError("REQUEST_FAILED", `${what} had no completions`);
+  return entries.flatMap((entry) => str(at(entry, 0)) ?? []);
+}

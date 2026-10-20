@@ -6,6 +6,7 @@ import { createNodeStream, createWebStream, type DeliveryInput, type ResumeReque
 import { chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
+import { browsePlaylist, checkLimit, checkQuery, fetchSuggestions, relatedVideos, searchVideos } from "./discovery.ts";
 import { basicInfo, type InfoBase } from "./info.ts";
 import { fetchText } from "./http.ts";
 import { requestNext, requestWebMetadata, resolveChannelLive } from "./innertube.ts";
@@ -17,17 +18,21 @@ import {
   requestContext,
   resolvePlayback,
   type ResolverState,
+  visitorData,
 } from "./resolve.ts";
 import {
   CaptionFormat,
   type CaptionOptions,
   type DownloadOptions,
+  type ListOptions,
   type LookupOptions,
+  type PlaylistInfo,
   type VideoFormat,
   type VideoInfo,
+  type VideoSummary,
   type YtdlOptions,
 } from "./types.ts";
-import { getVideoTarget, type VideoTarget } from "./url.ts";
+import { getVideoTarget, parsePlaylistId, type VideoTarget } from "./url.ts";
 
 /**
  * One YouTube session: visitor data, blocked clients, account and PO tokens belong to the
@@ -115,6 +120,49 @@ export class Ytdl {
     return fetchText(this.#state.fetch, url, { headers: userAgentHeader(info.client), signal }, "YouTube captions");
   }
 
+  /**
+   * Videos matching `query` in YouTube's rank order, at most `limit` (20 unless set), across as many result
+   * pages as that takes. Channels, playlists and shelves are left out. Discovery requests share the instance's
+   * visitor data and never send the `cookie`.
+   */
+  async search(query: string, options: ListOptions = {}): Promise<readonly VideoSummary[]> {
+    checkQuery(query);
+    const limit = checkLimit(options.limit) ?? 20;
+    const context = requestContext(this.#state, options.signal);
+    return searchVideos(context, await visitorData(this.#state, context), query, limit);
+  }
+
+  /**
+   * A playlist by ID or by a YouTube URL with a `list` parameter, with its entries in playlist order across
+   * pages: all of them, or the first `limit`. Entries YouTube marks unplayable are left out.
+   */
+  async getPlaylist(playlist: string, options: ListOptions = {}): Promise<PlaylistInfo> {
+    const id = parsePlaylistId(playlist);
+    if (id === undefined) {
+      throw new YtdlError("INVALID_URL", `Not a YouTube playlist URL or ID: ${String(playlist).slice(0, 200)}`);
+    }
+    const limit = checkLimit(options.limit) ?? Number.POSITIVE_INFINITY;
+    const context = requestContext(this.#state, options.signal);
+    return browsePlaylist(context, await visitorData(this.#state, context), id, limit);
+  }
+
+  /**
+   * The related videos `getInfo` returns as `relatedVideos`, from one `next` request and no player lookup.
+   * Takes the same input as {@link getInfo}.
+   */
+  async getRelated(video: string, options: LookupOptions = {}): Promise<readonly VideoSummary[]> {
+    const target = getVideoTarget(video);
+    const context = requestContext(this.#state, options.signal);
+    const id = await this.#videoId(target, options.signal);
+    return relatedVideos(await requestNext(context, id, await visitorData(this.#state, context)));
+  }
+
+  /** YouTube's autocomplete completions for `query` in provider order, asked in the instance's `lang` and `country`. */
+  async getSuggestions(query: string, options: LookupOptions = {}): Promise<readonly string[]> {
+    checkQuery(query);
+    return fetchSuggestions(requestContext(this.#state, options.signal), query);
+  }
+
   #unexpired(video: string | VideoInfo): VideoInfo | undefined {
     return typeof video !== "string" && video.expiresAt > Date.now() + 60_000 ? video : undefined;
   }
@@ -148,9 +196,15 @@ export class Ytdl {
       mintPoToken:
         getPoToken &&
         (async (current, tokenSignal) => {
-          const visitorData = this.#lookups.get(current)?.visitorData;
-          const dataSyncId = visitorData ? undefined : await auth?.dataSyncId(tokenSignal);
-          return getPoToken({ videoId: "", client: current.client, visitorData, dataSyncId, signal: tokenSignal });
+          const visitor = this.#lookups.get(current)?.visitorData;
+          const dataSyncId = visitor ? undefined : await auth?.dataSyncId(tokenSignal);
+          return getPoToken({
+            videoId: "",
+            client: current.client,
+            visitorData: visitor,
+            dataSyncId,
+            signal: tokenSignal,
+          });
         }),
     };
   }

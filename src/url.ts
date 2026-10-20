@@ -1,6 +1,7 @@
 import { YtdlError } from "./errors.ts";
 
 const ID = /^[\w-]{11}$/u;
+const PLAYLIST_ID = /^[\w-]{12,64}$/u;
 const HOSTS = new Set([
   "youtube.com",
   "www.youtube.com",
@@ -51,4 +52,11 @@ export function getVideoTarget(input: string): VideoTarget {
     return { channelLive: `https://www.youtube.com${url.pathname.replace(/\/$/u, "")}` };
   }
   throw new YtdlError("INVALID_URL", `Not a YouTube video URL, channel live URL or ID: ${input.slice(0, 200)}`);
+}
+
+/** The playlist ID of a bare ID or a YouTube URL's `list` parameter; `undefined` for account lists such as `WL`. */
+export function parsePlaylistId(input: string): string | undefined {
+  const text = typeof input === "string" ? input.trim() : "";
+  const id = PLAYLIST_ID.test(text) ? text : youtubeUrl(text)?.searchParams.get("list");
+  return id && PLAYLIST_ID.test(id) ? id : undefined;
 }

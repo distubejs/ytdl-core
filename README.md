@@ -10,6 +10,7 @@ YouTube video info and downloads for Node.js. A DisTube fork of `ytdl-core`.
 
 - Video details, chapters, storyboards, related videos and every format
 - Caption tracks as WebVTT, JSON or XML text
+- Video search, playlists with every page, related videos and search suggestions
 - Node `Readable` and web `ReadableStream` downloads, with byte ranges
 - Downloads that resume on their own when YouTube cuts a URL off
 - Live streams over HLS or DASH
@@ -42,9 +43,13 @@ const info = await yt.getInfo("https://www.youtube.com/watch?v=aqz-KE-bpKQ");
 console.log(info.videoDetails.title);
 
 yt.download(info, { quality: Quality.HighestAudio, filter: Filter.AudioOnly }).pipe(createWriteStream("audio.webm"));
+
+const [first] = await yt.search("blender open movie", { limit: 5 });
+const playlist = await yt.getPlaylist("https://www.youtube.com/playlist?list=PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5");
+console.log(first?.title, playlist.videos.length);
 ```
 
-Formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distubejs.github.io/ytdl-core/).
+Search, formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distubejs.github.io/ytdl-core/).
 
 ## Development
 

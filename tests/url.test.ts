@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { YtdlError } from "../src/errors.ts";
-import { getVideoTarget, parseVideoId } from "../src/url.ts";
+import { getVideoTarget, parsePlaylistId, parseVideoId } from "../src/url.ts";
 
 describe("parseVideoId", () => {
   test.each([
@@ -65,5 +65,23 @@ describe("getVideoTarget", () => {
       caught = error;
     }
     expect(YtdlError.is(caught, "INVALID_URL")).toBe(true);
+  });
+});
+
+describe("parsePlaylistId", () => {
+  test.each([
+    ["https://www.youtube.com/playlist?list=PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5", "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"],
+    ["https://www.youtube.com/watch?v=abcdefghijk&list=PL6B3937A5D230E335", "PL6B3937A5D230E335"],
+    ["PL6B3937A5D230E335", "PL6B3937A5D230E335"],
+  ])("%s", (input, expected) => {
+    expect(parsePlaylistId(input)).toBe(expected);
+  });
+
+  test.each([
+    "https://www.youtube.com/watch?v=abcdefghijk&list=WL",
+    "abcdefghijk",
+    "https://example.com/playlist?list=PL6B3937A5D230E335",
+  ])("returns undefined for %s", (input) => {
+    expect(parsePlaylistId(input)).toBeUndefined();
   });
 });
