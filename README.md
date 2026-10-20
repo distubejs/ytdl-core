@@ -45,6 +45,12 @@ yt.download(info, { quality: Quality.HighestAudio, filter: Filter.AudioOnly }).p
 
 Formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distubejs.github.io/ytdl-core/).
 
+## Development
+
+Run `bun install`, then `bun run verify` for the offline gates.
+
 ## License
 
 MIT. Originally [fent/node-ytdl-core](https://github.com/fent/node-ytdl-core) and its contributors.
+
+SABR streaming uses [googlevideo](https://github.com/LuanRT/googlevideo), MIT, as a dependency.

@@ -23,6 +23,7 @@ jobs:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run verify
+      - run: sh scripts/check-pack.sh
 
   live:
     needs: verify
