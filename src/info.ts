@@ -1,5 +1,5 @@
 import { at, collect, type Json, list, num, parseAbbreviated, parseClock, str, text, thumbnails } from "./json.ts";
-import type { Author, CaptionTrack, Chapter, RelatedVideo, Storyboard, VideoDetails, VideoInfo } from "./types.ts";
+import type { Author, CaptionTrack, Chapter, Storyboard, VideoDetails, VideoInfo, VideoSummary } from "./types.ts";
 
 function author(player: Json, next: Json): Author {
   const details = at(player, "videoDetails");
@@ -71,10 +71,10 @@ function likes(next: Json): number | undefined {
   return undefined;
 }
 
-function relatedVideos(next: Json): RelatedVideo[] {
+function relatedVideos(next: Json): VideoSummary[] {
   const seen = new Set<string>();
-  const out: RelatedVideo[] = [];
-  const add = (video: RelatedVideo) => {
+  const out: VideoSummary[] = [];
+  const add = (video: VideoSummary) => {
     if (seen.has(video.id)) return;
     seen.add(video.id);
     out.push(video);

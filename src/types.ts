@@ -158,7 +158,8 @@ export interface Storyboard {
   readonly storyboardCount: number;
 }
 
-export interface RelatedVideo {
+/** One video in search results, a playlist or a related list. */
+export interface VideoSummary {
   readonly id: string;
   readonly title: string;
   readonly author: { readonly id: string | undefined; readonly name: string | undefined };
@@ -264,7 +265,7 @@ export interface CaptionOptions extends LookupOptions {
 
 export interface VideoInfo {
   readonly videoDetails: VideoDetails;
-  readonly relatedVideos: readonly RelatedVideo[];
+  readonly relatedVideos: readonly VideoSummary[];
   /** The raw InnerTube player response, for fields ytdl-core does not model. */
   readonly playerResponse: unknown;
   readonly formats: readonly VideoFormat[];
