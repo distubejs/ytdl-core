@@ -2,12 +2,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { userAgentHeader } from "../clients.ts";
 import { YtdlError } from "../errors.ts";
 import { expectOk, ignore, send } from "../http.ts";
-import type { DeliveryInput } from "./index.ts";
-import type { VideoFormat, VideoInfo } from "../types.ts";
+import type { Delivery, Playback, ReadOptions } from "./index.ts";
+import type { VideoFormat } from "../formats.ts";
+import type { VideoInfo } from "../info.ts";
 
 const MAX_RESUMES_WITHOUT_PROGRESS = 3;
-
-export type ReadEnd = "complete" | "switched";
 
 export async function waitUntil(time: number, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
@@ -16,18 +15,30 @@ export async function waitUntil(time: number, signal: AbortSignal): Promise<void
 }
 
 export class Session {
-  info: VideoInfo;
-  format: VideoFormat;
+  readonly delivery: Delivery;
+  readonly #playback: Playback;
+  readonly #options: ReadOptions;
   readonly #signal: AbortSignal;
   #downloaded = 0;
   #attempt = 0;
-  readonly input: DeliveryInput;
 
-  constructor(input: DeliveryInput, signal: AbortSignal) {
-    this.info = input.info;
-    this.format = input.format;
-    this.input = input;
+  constructor(delivery: Delivery, playback: Playback, options: ReadOptions, signal: AbortSignal) {
+    this.delivery = delivery;
+    this.#playback = playback;
+    this.#options = options;
     this.#signal = signal;
+  }
+
+  get info(): VideoInfo {
+    return this.#playback.info;
+  }
+
+  get format(): VideoFormat {
+    return this.#playback.format;
+  }
+
+  get downloaded(): number {
+    return this.#downloaded;
   }
 
   async ensureFresh(): Promise<boolean> {
@@ -43,7 +54,7 @@ export class Session {
     const what = `itag ${itag}: media`;
     // YouTube requires the client that signed the URL to fetch it.
     const init = { headers: userAgentHeader(this.format.client), signal: this.#signal };
-    const response = await send(this.input.fetch, url, init, what);
+    const response = await send(this.delivery.fetch, url, init, what);
     if (allowNotFound && response.status === 404) return response;
     if (response.status !== 403) return expectOk(response, what);
     response.body?.cancel().catch(ignore);
@@ -54,7 +65,7 @@ export class Session {
   progress(bytes: number, total: number | undefined): void {
     this.#attempt = 0;
     this.#downloaded += bytes;
-    this.input.options.onProgress?.({ chunkBytes: bytes, downloaded: this.#downloaded, total });
+    this.#options.onProgress?.({ chunkBytes: bytes, downloaded: this.#downloaded, total });
   }
 
   async resume(reason: string, cause: YtdlError): Promise<void> {
@@ -69,10 +80,10 @@ export class Session {
         },
       );
     }
-    this.input.options.onRetry?.({ attempt, client, reason });
-    let next: { readonly info: VideoInfo; readonly format: VideoFormat };
+    this.#options.onRetry?.({ attempt, client, reason });
+    let next: Playback;
     try {
-      next = await this.input.resume({ format: this.format, attempt, reason, signal: this.#signal });
+      next = await this.delivery.resume({ ...this.#playback, attempt, reason, signal: this.#signal });
     } catch (error) {
       this.#signal.throwIfAborted();
       if (YtdlError.is(error) && error.cause === undefined) {
@@ -85,8 +96,8 @@ export class Session {
       }
       throw error;
     }
-    this.info = next.info;
-    this.format = next.format;
+    this.#playback.info = next.info;
+    this.#playback.format = next.format;
   }
 }
 

@@ -26,13 +26,12 @@ function youtube(players: Record<string, string>, current?: string) {
   return { fetch, requests, scripts };
 }
 
-function solveError(run: () => unknown): YtdlError {
-  try {
-    run();
-  } catch (error) {
-    if (error instanceof YtdlError) return error;
-    throw error;
-  }
+async function solveError(solving: Promise<unknown>): Promise<YtdlError> {
+  const error = await solving.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  if (error instanceof YtdlError) return error;
   throw new Error("Expected a YtdlError");
 }
 
@@ -43,26 +42,45 @@ describe("loadPlayer", () => {
     expect(player.id).toBe("a0000001");
     expect(player.signatureTimestamp).toBe(20123);
 
-    const cipher = new URLSearchParams({ s: "AB=CDE", sp: "sig", url: MEDIA }).toString();
-    const signed = new URL(player.solveUrl({ signatureCipher: cipher }));
-    expect(signed.searchParams.get("sig")).toBe("DC=BA");
-    expect(signed.searchParams.get("n")).toBe("xyz3");
-    expect(signed.searchParams.get("mime")).toBe("audio/webm");
-
-    const defaultParam = new URL(
-      player.solveUrl({ signatureCipher: new URLSearchParams({ s: "abc", url: MEDIA }).toString() }),
-    );
-    expect(defaultParam.searchParams.get("signature")).toBe("ba");
-
-    expect(new URL(player.solveUrl({ url: MEDIA })).searchParams.get("n")).toBe("xyz3");
-    const direct = "https://rr1---sn-abc.googlevideo.com/videoplayback?itag=18";
-    expect(player.solveUrl({ url: direct })).toBe(direct);
-
     const manifest =
       "https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1/n/xyz/source/yt_live_broadcast";
-    expect(player.solveUrl({ url: manifest })).toBe(
+    const direct = "https://rr1---sn-abc.googlevideo.com/videoplayback?itag=18";
+    const [signed, defaultParam, throttled, untouched, manifestUrl] = await player.solve([
+      { signatureCipher: new URLSearchParams({ s: "AB=CDE", sp: "sig", url: MEDIA }).toString() },
+      { signatureCipher: new URLSearchParams({ s: "abc", url: MEDIA }).toString() },
+      { url: MEDIA },
+      { url: direct },
+      { url: manifest },
+    ]);
+    const signedUrl = new URL(signed ?? "");
+    expect(signedUrl.searchParams.get("sig")).toBe("DC=BA");
+    expect(signedUrl.searchParams.get("n")).toBe("xyz3");
+    expect(signedUrl.searchParams.get("mime")).toBe("audio/webm");
+    expect(new URL(defaultParam ?? "").searchParams.get("signature")).toBe("ba");
+    expect(new URL(throttled ?? "").searchParams.get("n")).toBe("xyz3");
+    expect(untouched).toBe(direct);
+    expect(manifestUrl).toBe(
       "https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1/n/xyz3/source/yt_live_broadcast",
     );
+  });
+
+  test("a slow player leaves the event loop free while it solves a batch", async () => {
+    const slow = "var hook=function(){var t=Date.now();while(Date.now()-t<50){}};";
+    const { fetch } = youtube({ a0000002: PLAYER.replace(HOOK, slow) });
+    const player = await loadPlayer({ fetch, playerId: "a0000002" });
+    const urls = Array.from({ length: 10 }, (_, index) => ({ url: `${MEDIA}${index}` }));
+    const ticks: number[] = [];
+    const interval = setInterval(() => ticks.push(Date.now()), 10);
+    const started = Date.now();
+    try {
+      const solved = await player.solve(urls);
+      expect(solved.map((url) => new URL(url).searchParams.get("n"))).toEqual(urls.map((_, index) => `xyz${index}4`));
+    } finally {
+      clearInterval(interval);
+    }
+    const gaps = ticks.map((tick, index) => tick - (ticks[index - 1] ?? started));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(500);
+    expect(Math.max(...gaps)).toBeLessThan(100);
   });
 
   test("a callback the player queues after the solve never reaches the host", async () => {
@@ -74,7 +92,8 @@ describe("loadPlayer", () => {
     process.on("uncaughtException", record);
     try {
       const player = await loadPlayer({ fetch, playerId: "b0000001" });
-      expect(new URL(player.solveUrl({ url: MEDIA })).searchParams.get("n")).toBe("xyz3");
+      const [solved] = await player.solve([{ url: MEDIA }]);
+      expect(new URL(solved ?? "").searchParams.get("n")).toBe("xyz3");
       await new Promise((resolve) => setTimeout(resolve, 100));
     } finally {
       process.off("unhandledRejection", record);
@@ -86,12 +105,13 @@ describe("loadPlayer", () => {
   test("an endless loop in player code fails the solve as PLAYER_SOLVE_FAILED", async () => {
     const { fetch } = youtube({ c0000001: PLAYER.replace(HOOK, "var hook=function(){for(;;){}};"), c0000002: PLAYER });
     const looping = await loadPlayer({ fetch, playerId: "c0000001" });
-    const error = solveError(() => looping.solveUrl({ url: MEDIA }));
+    const error = await solveError(looping.solve([{ url: MEDIA }]));
     expect(error.code).toBe("PLAYER_SOLVE_FAILED");
     expect(error.cause).toBeInstanceOf(Error);
 
     const healthy = await loadPlayer({ fetch, playerId: "c0000002" });
-    expect(new URL(healthy.solveUrl({ url: MEDIA })).searchParams.get("n")).toBe("xyz3");
+    const [solved] = await healthy.solve([{ url: MEDIA }]);
+    expect(new URL(solved ?? "").searchParams.get("n")).toBe("xyz3");
   });
 
   test("a player without the URL builder fails to load as PLAYER_SOLVE_FAILED", async () => {

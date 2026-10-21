@@ -1,7 +1,6 @@
-import { userAgentHeader } from "./clients.ts";
+import { userAgentHeader, WEB } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
-import { fetchText } from "./http.ts";
-import { type RequestContext, requestBrowse, requestSearch } from "./innertube.ts";
+import type { InnerTube } from "./innertube.ts";
 import {
   at,
   collect,
@@ -15,7 +14,28 @@ import {
   text,
   thumbnails,
 } from "./json.ts";
-import type { PlaylistInfo, VideoSummary } from "./types.ts";
+import type { Thumbnail } from "./info.ts";
+
+/** One video in search results, a playlist or a related list. */
+export interface VideoSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly author: { readonly id: string | undefined; readonly name: string | undefined };
+  readonly lengthSeconds: number | undefined;
+  readonly viewCount: number | undefined;
+  readonly thumbnails: readonly Thumbnail[];
+  readonly isLive: boolean;
+}
+
+export interface PlaylistInfo {
+  readonly id: string;
+  readonly url: string;
+  readonly title: string | undefined;
+  readonly author: VideoSummary["author"];
+  readonly thumbnails: readonly Thumbnail[];
+  /** Entries in playlist order, without the ones YouTube marks unplayable. */
+  readonly videos: readonly VideoSummary[];
+}
 
 const SUGGEST_URL = "https://suggestqueries-clients6.youtube.com/complete/search";
 const SUMMARY_KINDS = ["videoRenderer", "compactVideoRenderer", "playlistVideoRenderer", "lockupViewModel"];
@@ -188,29 +208,31 @@ async function collectPages({ first, more, entries, lists, limit, unique, signal
 }
 
 export async function searchVideos(
-  context: RequestContext,
-  visitorData: string,
+  innertube: InnerTube,
   query: string,
   limit: number,
+  signal: AbortSignal | undefined,
 ): Promise<VideoSummary[]> {
+  const visitorData = await innertube.visitorData(signal);
   return collectPages({
-    first: await requestSearch(context, { query }, visitorData),
-    more: (token) => requestSearch(context, { continuation: token }, visitorData),
+    first: await innertube.search({ query }, visitorData, signal),
+    more: (token) => innertube.search({ continuation: token }, visitorData, signal),
     entries: searchResults,
     lists: searchLists,
     limit,
     unique: true,
-    signal: context.signal,
+    signal,
   });
 }
 
 export async function browsePlaylist(
-  context: RequestContext,
-  visitorData: string,
+  innertube: InnerTube,
   id: string,
   limit: number,
+  signal: AbortSignal | undefined,
 ): Promise<PlaylistInfo> {
-  const first = await requestBrowse(context, { playlistId: id }, visitorData);
+  const visitorData = await innertube.visitorData(signal);
+  const first = await innertube.browse({ playlistId: id }, visitorData, signal);
   const metadata = collect(first, "playlistMetadataRenderer")[0];
   const header = collect(first, "playlistHeaderRenderer")[0];
   const pageHeader = collect(first, "pageHeaderViewModel")[0];
@@ -219,12 +241,12 @@ export async function browsePlaylist(
   }
   const videos = await collectPages({
     first,
-    more: (token) => requestBrowse(context, { continuation: token }, visitorData),
+    more: (token) => innertube.browse({ continuation: token }, visitorData, signal),
     entries: summaries,
     lists: playlistLists,
     limit,
     unique: false,
-    signal: context.signal,
+    signal,
   });
   return {
     id,
@@ -239,22 +261,21 @@ export async function browsePlaylist(
   };
 }
 
-export async function fetchSuggestions(context: RequestContext, query: string): Promise<string[]> {
+export async function fetchSuggestions(
+  innertube: InnerTube,
+  query: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
   const url = new URL(SUGGEST_URL);
   url.search = new URLSearchParams({
     client: "youtube",
     ds: "yt",
-    hl: context.lang ?? "en",
-    gl: context.country ?? "US",
+    hl: innertube.lang,
+    gl: innertube.country,
     q: query,
   }).toString();
   const what = "YouTube suggestions";
-  const body = await fetchText(
-    context.fetch,
-    url.href,
-    { headers: userAgentHeader("web"), signal: context.signal },
-    what,
-  );
+  const body = await innertube.text(url.href, { headers: userAgentHeader(WEB), signal }, what);
   let parsed: unknown;
   try {
     parsed = JSON.parse(/^[^(]*\((.*)\)\s*;?\s*$/su.exec(body)?.[1] ?? "");

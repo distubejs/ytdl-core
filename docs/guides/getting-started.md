@@ -21,13 +21,13 @@ ytdl-core runs on Node.js 22.12 or later, and on Bun.
 
 ```ts
 import { createWriteStream } from "node:fs";
-import { Filter, Quality, Ytdl } from "@distube/ytdl-core";
+import { Quality, Ytdl } from "@distube/ytdl-core";
 
 const yt = new Ytdl();
 
 yt.download("https://www.youtube.com/watch?v=aqz-KE-bpKQ", {
   quality: Quality.HighestAudio,
-  filter: Filter.AudioOnly,
+  filter: { hasAudio: true, hasVideo: false },
 }).pipe(createWriteStream("audio.webm"));
 ```
 
@@ -53,3 +53,4 @@ All options are listed in [`YtdlOptions`](../../api/interfaces/ytdloptions/).
 - [Download](../download/) with ranges, progress and cancellation
 - [Choose a format](../formats/)
 - Pick the [clients](../clients/) to ask
+- [Migrate from v4](../migrating-from-v4/)

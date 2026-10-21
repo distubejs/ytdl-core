@@ -1,4 +1,4 @@
-import type { Thumbnail } from "./types.ts";
+import type { Thumbnail } from "./info.ts";
 
 export type Json = Readonly<Record<string, unknown>>;
 

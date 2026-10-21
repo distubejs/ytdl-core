@@ -11,7 +11,7 @@ YouTube video info and downloads for Node.js. A DisTube fork of `ytdl-core`.
 - Video details, chapters, storyboards, related videos and every format
 - Caption tracks as WebVTT, JSON or XML text
 - Video search, playlists with every page, related videos and search suggestions
-- Node `Readable` and web `ReadableStream` downloads, with byte ranges or a start time
+- Node `Readable` downloads with byte ranges or a start time, and one format read many times through `open`
 - Downloads that resume on their own when YouTube cuts a URL off
 - Live streams over HLS or DASH
 - SABR-only formats, which on some clients means everything above 360p
@@ -35,21 +35,23 @@ Requires Node.js 22.12 or later, or Bun.
 
 ```ts
 import { createWriteStream } from "node:fs";
-import { Filter, Quality, Ytdl } from "@distube/ytdl-core";
+import { Quality, Ytdl } from "@distube/ytdl-core";
 
 const yt = new Ytdl();
 
 const info = await yt.getInfo("https://www.youtube.com/watch?v=aqz-KE-bpKQ");
 console.log(info.videoDetails.title);
 
-yt.download(info, { quality: Quality.HighestAudio, filter: Filter.AudioOnly }).pipe(createWriteStream("audio.webm"));
+yt.download(info, { quality: Quality.HighestAudio, filter: { hasAudio: true, hasVideo: false } }).pipe(
+  createWriteStream("audio.webm"),
+);
 
 const [first] = await yt.search("blender open movie", { limit: 5 });
 const playlist = await yt.getPlaylist("https://www.youtube.com/playlist?list=PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5");
 console.log(first?.title, playlist.videos.length);
 ```
 
-Search, formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distube.js.org/ytdl-core/).
+Search, formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distube.js.org/ytdl-core/). Coming from 4.x? Read [Migrating from v4](https://distube.js.org/ytdl-core/guides/migrating-from-v4/).
 
 ## Development
 

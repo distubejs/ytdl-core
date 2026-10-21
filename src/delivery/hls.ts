@@ -1,7 +1,7 @@
 import type { Client } from "../clients.ts";
 import { AUDIO_CODEC, MUXED_AUDIO_KBPS } from "../formats.ts";
 import { num } from "../json.ts";
-import type { VideoFormat } from "../types.ts";
+import type { VideoFormat } from "../formats.ts";
 import { YtdlError } from "../errors.ts";
 import { readBody, waitUntil, type Session } from "./session.ts";
 

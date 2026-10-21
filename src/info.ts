@@ -1,6 +1,87 @@
 import { relatedVideos } from "./discovery.ts";
 import { at, collect, type Json, list, num, parseAbbreviated, parseClock, str, text, thumbnails } from "./json.ts";
-import type { Author, CaptionTrack, Chapter, Storyboard, VideoDetails, VideoInfo } from "./types.ts";
+import type { CaptionTrack } from "./captions.ts";
+import type { Client } from "./clients.ts";
+import type { VideoFormat } from "./formats.ts";
+import type { VideoSummary } from "./discovery.ts";
+
+export interface Thumbnail {
+  readonly url: string;
+  readonly width: number | undefined;
+  readonly height: number | undefined;
+}
+
+export interface Author {
+  readonly id: string;
+  readonly name: string;
+  readonly url: string;
+  readonly thumbnails: readonly Thumbnail[];
+  readonly verified: boolean | undefined;
+  readonly subscriberCount: number | undefined;
+}
+
+export interface Chapter {
+  readonly title: string;
+  /** Seconds from the start. */
+  readonly startTime: number;
+}
+
+export interface Storyboard {
+  /** Contains `$M` for the sheet index. */
+  readonly templateUrl: string;
+  readonly thumbnailWidth: number;
+  readonly thumbnailHeight: number;
+  readonly thumbnailCount: number;
+  /** Milliseconds between thumbnails. */
+  readonly interval: number;
+  readonly columns: number;
+  readonly rows: number;
+  readonly storyboardCount: number;
+}
+
+export interface VideoDetails {
+  readonly id: string;
+  readonly url: string;
+  readonly title: string;
+  readonly description: string | undefined;
+  readonly lengthSeconds: number;
+  readonly viewCount: number | undefined;
+  readonly likes: number | undefined;
+  readonly publishDate: string | undefined;
+  readonly uploadDate: string | undefined;
+  readonly keywords: readonly string[];
+  readonly category: string | undefined;
+  readonly thumbnails: readonly Thumbnail[];
+  readonly author: Author;
+  readonly isLive: boolean;
+  readonly isUpcoming: boolean;
+  readonly isUnlisted: boolean | undefined;
+  readonly isFamilySafe: boolean | undefined;
+  readonly isAgeRestricted: boolean;
+  readonly availableCountries: readonly string[] | undefined;
+  readonly chapters: readonly Chapter[];
+  readonly storyboards: readonly Storyboard[];
+}
+
+export interface VideoInfo {
+  readonly videoDetails: VideoDetails;
+  readonly relatedVideos: readonly VideoSummary[];
+  /** The raw InnerTube player response, for fields ytdl-core does not model. */
+  readonly playerResponse: unknown;
+  readonly formats: readonly VideoFormat[];
+  /** Empty when the video has no captions. */
+  readonly captionTracks: readonly CaptionTrack[];
+  readonly client: Client;
+  readonly hlsManifestUrl: string | undefined;
+  /** The SABR session that streams formats without a `url`. */
+  readonly sabr: { readonly url: string; readonly config: string } | undefined;
+  /** The visitor ID the formats were resolved with; `undefined` when signed in. */
+  readonly visitorData: string | undefined;
+  /** Epoch ms after which the format URLs stop working. */
+  readonly expiresAt: number;
+  /** Epoch ms before which an enforced preroll keeps media requests at 403. */
+  readonly playableAt: number;
+}
 
 function author(player: Json, next: Json): Author {
   const details = at(player, "videoDetails");

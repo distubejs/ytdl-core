@@ -3,14 +3,13 @@ import { BotGuardClient } from "bgutils-js/botguard";
 import type { WebPoSignalOutput } from "bgutils-js/shared-types";
 import { buildURL, getHeaders, parseLooseJSON } from "bgutils-js/utils";
 import { WebPoMinter } from "bgutils-js/webpo";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { at, str, ytcfg } from "../json.ts";
+import { serve } from "../worker-rpc.ts";
 
-type MintRequest = { readonly type: "mint"; readonly id: number; readonly identifier?: string };
-type FetchReply =
+export type FetchReply =
   | { readonly type: "fetched"; readonly id: number; readonly status: number; readonly body: ArrayBuffer }
   | { readonly type: "fetched"; readonly id: number; readonly error: string };
-export type HostMessage = MintRequest | FetchReply;
 
 export type FetchRequest = {
   readonly type: "fetch";
@@ -20,10 +19,6 @@ export type FetchRequest = {
   readonly headers: Record<string, string>;
   readonly body: string | undefined;
 };
-export type WorkerMessage =
-  | { readonly type: "minted"; readonly id: number; readonly token: string | undefined }
-  | { readonly type: "failed"; readonly id: number; readonly error: string }
-  | FetchRequest;
 
 // YouTube web player's WAA request key.
 const REQUEST_KEY = "O43z0dpjhgX20SCx4KAo";
@@ -36,6 +31,7 @@ const port = parentPort;
 const dom = new JSDOM('<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>', {
   url: "https://www.youtube.com/",
   referrer: "https://www.youtube.com/",
+  virtualConsole: new VirtualConsole(),
 });
 Object.assign(globalThis, {
   window: dom.window,
@@ -138,22 +134,13 @@ async function mint(identifier: string | undefined): Promise<string | undefined>
   return identifier === undefined ? undefined : minter.mintAsWebsafeString(identifier);
 }
 
-port.on("message", (message: HostMessage) => {
-  if (message.type === "fetched") {
-    const pending = fetches.get(message.id);
-    fetches.delete(message.id);
-    if ("error" in message) pending?.reject(new Error(message.error));
-    else pending?.resolve(new Response(message.body, { status: message.status }));
-    return;
-  }
-  const { id } = message;
-  mint(message.identifier).then(
-    (token) => port.postMessage({ type: "minted", id, token } satisfies WorkerMessage),
-    // Messages, not errors: an error whose cause holds a function cannot be cloned across threads.
-    (error: unknown) => port.postMessage({ type: "failed", id, error: describe(error) } satisfies WorkerMessage),
-  );
-});
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+serve(
+  (contentBinding) => mint(typeof contentBinding === "string" ? contentBinding : undefined),
+  (message) => {
+    const reply = message as FetchReply;
+    const pending = fetches.get(reply.id);
+    fetches.delete(reply.id);
+    if ("error" in reply) pending?.reject(new Error(reply.error));
+    else pending?.resolve(new Response(reply.body, { status: reply.status }));
+  },
+);

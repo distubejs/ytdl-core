@@ -2,45 +2,71 @@ import type { Readable } from "node:stream";
 import { CookieAuth } from "./auth.ts";
 import { CLIENTS, DEFAULT_CLIENTS, userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
-import { createNodeStream, createWebStream, type DeliveryInput, type ResumeRequest } from "./delivery/index.ts";
+import { deliver, type Delivery, Media, type Playback, type ResumeRequest } from "./delivery/index.ts";
 import { chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import { browsePlaylist, checkLimit, checkQuery, fetchSuggestions, relatedVideos, searchVideos } from "./discovery.ts";
 import { basicInfo, type InfoBase } from "./info.ts";
-import { fetchText } from "./http.ts";
-import { requestNext, requestWebMetadata, resolveChannelLive } from "./innertube.ts";
+import { InnerTube } from "./innertube.ts";
 import { at, isRecord, type Json } from "./json.ts";
-import {
-  planClients,
-  replaceVisitorData,
-  type Resolution,
-  requestContext,
-  resolvePlayback,
-  type ResolverState,
-  visitorData,
-} from "./resolve.ts";
-import {
-  CaptionFormat,
-  type CaptionOptions,
-  type DownloadOptions,
-  type ListOptions,
-  type LookupOptions,
-  type PlaylistInfo,
-  type VideoFormat,
-  type VideoInfo,
-  type VideoSummary,
-  type YtdlOptions,
-} from "./types.ts";
+import { planClients, type Resolution, Resolver } from "./resolve.ts";
+import { CaptionFormat, type CaptionOptions } from "./captions.ts";
+import type { DownloadOptions } from "./delivery/index.ts";
+import type { VideoFormat } from "./formats.ts";
+import type { VideoInfo } from "./info.ts";
+import type { PlaylistInfo, VideoSummary } from "./discovery.ts";
 import { getVideoTarget, parsePlaylistId, type VideoTarget } from "./url.ts";
+import type { GetPoToken } from "./po-token/index.ts";
+import type { Client } from "./clients.ts";
+
+export interface YtdlOptions {
+  /** `Cookie` header or Netscape cookie export of a signed-in YouTube session. */
+  readonly cookie?: string;
+  /** Mints PO tokens; clients that need one are skipped without it. */
+  readonly getPoToken?: GetPoToken;
+  /**
+   * Clients to ask, most preferred first.
+   * @defaultValue `DEFAULT_CLIENTS`
+   */
+  readonly clients?: readonly Client[];
+  /**
+   * Every request goes through this; pass one bound to a proxy or local address.
+   * @defaultValue `globalThis.fetch`
+   */
+  readonly fetch?: typeof fetch;
+  /**
+   * InnerTube `hl`, the language of titles and messages.
+   * @defaultValue `"en"`
+   */
+  readonly lang?: string;
+  /**
+   * InnerTube `gl`, the content region.
+   * @defaultValue `"US"`
+   */
+  readonly country?: string;
+  /** Pins the player.js version used for solving. */
+  readonly playerId?: string;
+}
+
+export interface LookupOptions {
+  /** Aborting it cancels the lookup or download. */
+  readonly signal?: AbortSignal;
+}
+
+export interface ListOptions extends LookupOptions {
+  /** Stops collecting at this many videos; a positive integer. */
+  readonly limit?: number;
+}
 
 /**
  * One YouTube session: visitor data, blocked clients, account and PO tokens belong to the
  * instance. Use one instance per account or network identity.
  */
 export class Ytdl {
-  readonly #state: ResolverState;
-  readonly #lookups = new WeakMap<VideoInfo, Pick<Resolution, "visitorData" | "sabr">>();
+  readonly #innertube: InnerTube;
+  readonly #resolver: Resolver;
+  readonly #delivery: Delivery;
 
   constructor(options: YtdlOptions = {}) {
     if (options.getPoToken !== undefined && typeof options.getPoToken !== "function") {
@@ -63,16 +89,22 @@ export class Ytdl {
       throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie or getPoToken this instance lacks");
     }
     const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
-    this.#state = {
-      fetch: fetcher,
-      lang: options.lang,
-      country: options.country,
-      playerId: options.playerId,
+    this.#innertube = new InnerTube({ fetch: fetcher, lang: options.lang, country: options.country });
+    const auth = options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher });
+    const { getPoToken } = options;
+    this.#resolver = new Resolver({
+      innertube: this.#innertube,
       clients,
-      auth: options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher }),
-      getPoToken: options.getPoToken,
-      blocked: new Map(),
-      visitor: undefined,
+      auth,
+      getPoToken,
+      playerId: options.playerId,
+    });
+    this.#delivery = {
+      fetch: fetcher,
+      resume: (request) => this.#resume(request),
+      mintPoToken:
+        getPoToken &&
+        ((info, signal) => getPoToken({ contentBinding: info.videoDetails.id, client: info.client, signal })),
     };
   }
 
@@ -82,7 +114,7 @@ export class Ytdl {
    */
   async getInfo(video: string, options: LookupOptions = {}): Promise<VideoInfo> {
     const id = await this.#videoId(getVideoTarget(video), options.signal);
-    const resolution = await resolvePlayback(this.#state, id, { signal: options.signal });
+    const resolution = await this.#resolver.resolve(id, { signal: options.signal });
     const [basic, formats] = await Promise.all([
       this.#basic(id, resolution, options.signal),
       this.#playableFormats(resolution, options.signal),
@@ -90,16 +122,23 @@ export class Ytdl {
     return this.#toInfo(basic, resolution, formats);
   }
 
-  /** Streams one format as a Node `Readable`. */
+  /**
+   * Streams the format `chooseFormat` picks as a Node `Readable`. An unexpired info is used as is; `Readable.toWeb`
+   * turns the stream into a web `ReadableStream`.
+   */
   download(video: string | VideoInfo, options: DownloadOptions = {}): Readable {
     const target = typeof video === "string" ? getVideoTarget(video) : { id: video.videoDetails.id };
-    return createNodeStream((signal) => this.#prepare(target, video, options, signal), options);
+    return deliver(this.#delivery, (signal) => this.#prepare(target, video, options, signal), options);
   }
 
-  /** The same delivery as {@link download}, as a web `ReadableStream`. */
-  downloadReadableStream(video: string | VideoInfo, options: DownloadOptions = {}): ReadableStream<Uint8Array> {
-    const target = typeof video === "string" ? getVideoTarget(video) : { id: video.videoDetails.id };
-    return createWebStream((signal) => this.#prepare(target, video, options, signal), options);
+  /**
+   * One format of `info`, read as often as needed without another lookup. A read that re-resolves after a 403 or
+   * an expired URL refreshes `Media#info`, and later reads start from it.
+   */
+  open(info: VideoInfo, format: VideoFormat): Media {
+    const own = info.formats.find((candidate) => sameFormat(candidate, format));
+    if (!own) throw new YtdlError("NO_FORMAT", `itag ${format.itag} is not a format of ${info.videoDetails.id}`);
+    return new Media(this.#delivery, info, own);
   }
 
   /**
@@ -117,7 +156,7 @@ export class Ytdl {
     signal?.throwIfAborted();
     const track = chooseTrack(info.captionTracks, options.lang);
     const url = captionUrl(track, options.format ?? CaptionFormat.Vtt);
-    return fetchText(this.#state.fetch, url, { headers: userAgentHeader(info.client), signal }, "YouTube captions");
+    return this.#innertube.text(url, { headers: userAgentHeader(info.client), signal }, "YouTube captions");
   }
 
   /**
@@ -128,8 +167,7 @@ export class Ytdl {
   async search(query: string, options: ListOptions = {}): Promise<readonly VideoSummary[]> {
     checkQuery(query);
     const limit = checkLimit(options.limit) ?? 20;
-    const context = requestContext(this.#state, options.signal);
-    return searchVideos(context, await visitorData(this.#state, context), query, limit);
+    return searchVideos(this.#innertube, query, limit, options.signal);
   }
 
   /**
@@ -142,8 +180,7 @@ export class Ytdl {
       throw new YtdlError("INVALID_URL", `Not a YouTube playlist URL or ID: ${String(playlist).slice(0, 200)}`);
     }
     const limit = checkLimit(options.limit) ?? Number.POSITIVE_INFINITY;
-    const context = requestContext(this.#state, options.signal);
-    return browsePlaylist(context, await visitorData(this.#state, context), id, limit);
+    return browsePlaylist(this.#innertube, id, limit, options.signal);
   }
 
   /**
@@ -152,15 +189,15 @@ export class Ytdl {
    */
   async getRelated(video: string, options: LookupOptions = {}): Promise<readonly VideoSummary[]> {
     const target = getVideoTarget(video);
-    const context = requestContext(this.#state, options.signal);
     const id = await this.#videoId(target, options.signal);
-    return relatedVideos(await requestNext(context, id, await visitorData(this.#state, context)));
+    const visitor = await this.#innertube.visitorData(options.signal);
+    return relatedVideos(await this.#innertube.next(id, visitor, options.signal));
   }
 
   /** YouTube's autocomplete completions for `query` in provider order, asked in the instance's `lang` and `country`. */
   async getSuggestions(query: string, options: LookupOptions = {}): Promise<readonly string[]> {
     checkQuery(query);
-    return fetchSuggestions(requestContext(this.#state, options.signal), query);
+    return fetchSuggestions(this.#innertube, query, options.signal);
   }
 
   #unexpired(video: string | VideoInfo): VideoInfo | undefined {
@@ -168,7 +205,7 @@ export class Ytdl {
   }
 
   #videoId(target: VideoTarget, signal: AbortSignal | undefined): Promise<string> | string {
-    return "id" in target ? target.id : resolveChannelLive(requestContext(this.#state, signal), target.channelLive);
+    return "id" in target ? target.id : this.#innertube.channelLiveVideo(target.channelLive, signal);
   }
 
   async #prepare(
@@ -176,48 +213,19 @@ export class Ytdl {
     video: string | VideoInfo,
     options: DownloadOptions,
     signal: AbortSignal,
-  ): Promise<DeliveryInput> {
-    const id = await this.#videoId(target, signal);
-    let info = this.#unexpired(video) ?? (await this.getInfo(id, { signal }));
-    let format = chooseFormat(info.formats, options);
-    if (format.url === undefined && !this.#lookups.get(info)?.sabr) {
-      info = await this.getInfo(id, { signal });
-      format = chooseFormat(info.formats, { ...options, format });
-    }
-    options.onInfo?.(info, format);
-    const { getPoToken, auth } = this.#state;
-    return {
-      info,
-      format,
-      fetch: this.#state.fetch,
-      options,
-      resume: (request) => this.#resume(info, request),
-      sabr: (current) => this.#lookups.get(current)?.sabr,
-      mintPoToken:
-        getPoToken &&
-        (async (current, tokenSignal) => {
-          const visitor = this.#lookups.get(current)?.visitorData;
-          const dataSyncId = visitor ? undefined : await auth?.dataSyncId(tokenSignal);
-          return getPoToken({
-            videoId: "",
-            client: current.client,
-            visitorData: visitor,
-            dataSyncId,
-            signal: tokenSignal,
-          });
-        }),
-    };
+  ): Promise<Playback> {
+    const info = this.#unexpired(video) ?? (await this.getInfo(await this.#videoId(target, signal), { signal }));
+    return { info, format: chooseFormat(info.formats, options) };
   }
 
-  async #resume(previous: VideoInfo, request: ResumeRequest): Promise<{ info: VideoInfo; format: VideoFormat }> {
-    const { format: failed, attempt, reason, signal } = request;
-    const visitor = this.#lookups.get(previous)?.visitorData;
+  async #resume(request: ResumeRequest): Promise<Playback> {
+    const { info: previous, format: failed, attempt, reason, signal } = request;
     if (attempt <= 1) {
-      if (visitor) await replaceVisitorData(this.#state, requestContext(this.#state, signal), visitor);
+      if (previous.visitorData) await this.#innertube.replaceVisitorData(previous.visitorData, signal);
     } else if (reason === "HTTP 403") {
-      this.#state.blocked.set(failed.client, Date.now());
+      this.#resolver.block(failed.client);
     }
-    const resolution = await resolvePlayback(this.#state, previous.videoDetails.id, {
+    const resolution = await this.#resolver.resolve(previous.videoDetails.id, {
       signal,
       format: failed,
       prefer: attempt <= 1 ? [failed.client] : undefined,
@@ -227,11 +235,11 @@ export class Ytdl {
       (candidate) => sameFormat(candidate, failed) && candidate.contentLength === failed.contentLength,
     );
     if (!format) throw new YtdlError("NO_FORMAT", `No client offers the same itag ${failed.itag} file after ${reason}`);
-    return { info: this.#toInfo(previous, resolution, formats), format };
+    return { info: this.#toInfo({ ...previous, playerResponse: resolution.player }, resolution, formats), format };
   }
 
   #toInfo(basic: InfoBase, resolution: Resolution, formats: readonly VideoFormat[]): VideoInfo {
-    const info: VideoInfo = {
+    return {
       videoDetails: basic.videoDetails,
       relatedVideos: basic.relatedVideos,
       playerResponse: basic.playerResponse,
@@ -239,20 +247,19 @@ export class Ytdl {
       formats,
       client: resolution.client,
       hlsManifestUrl: resolution.hlsManifestUrl,
+      sabr: resolution.sabr,
+      visitorData: resolution.visitorData,
       expiresAt: resolution.expiresAt,
       playableAt: resolution.playableAt,
     };
-    this.#lookups.set(info, { visitorData: resolution.visitorData, sabr: resolution.sabr });
-    return info;
   }
 
   async #basic(id: string, resolution: Resolution, signal: AbortSignal | undefined): Promise<InfoBase> {
-    const context = requestContext(this.#state, signal);
     const visitor = resolution.visitorData;
     const [next, web] = await Promise.all([
-      requestNext(context, id, visitor).catch(() => ({}) as Json),
+      this.#innertube.next(id, visitor, signal).catch(() => ({}) as Json),
       at(resolution.player, "microformat") === undefined
-        ? requestWebMetadata(context, id, visitor).catch(() => ({}) as Json)
+        ? this.#innertube.webMetadata(id, visitor, signal).catch(() => ({}) as Json)
         : Promise.resolve({} as Json),
     ]);
     signal?.throwIfAborted();
@@ -267,8 +274,7 @@ export class Ytdl {
     if (at(resolution.player, "videoDetails", "isLive") !== true || !resolution.hlsManifestUrl) {
       return resolution.formats;
     }
-    const playlist = await fetchText(
-      this.#state.fetch,
+    const playlist = await this.#innertube.text(
       resolution.hlsManifestUrl,
       { headers: userAgentHeader(resolution.client), signal },
       "YouTube HLS manifest",

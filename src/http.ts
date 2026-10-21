@@ -4,7 +4,10 @@ export const ignore = (): void => {};
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
+  if (signal.aborted) {
+    promise.catch(ignore);
+    return Promise.reject(signal.reason);
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });

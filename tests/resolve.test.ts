@@ -77,30 +77,15 @@ describe("client order", () => {
       playerId: PLAYER_ID,
       clients,
       getPoToken: async (request) => {
-        requests.push({ videoId: request.videoId, client: request.client, visitorData: request.visitorData });
+        requests.push({ contentBinding: request.contentBinding, client: request.client });
         return "POTOKEN-for-test";
       },
     }).getInfo(ID);
 
     expect(withHook.clients()).toEqual([VISIONOS, TV, MWEB]);
-    expect(requests).toEqual([{ videoId: ID, client: "mweb", visitorData: "VISITOR-1" }]);
+    expect(requests).toEqual([{ contentBinding: ID, client: "mweb" }]);
     expect(withHook.playerCalls[2]?.body.serviceIntegrityDimensions).toEqual({ poToken: "POTOKEN-for-test" });
     expect(new URL(info.formats[0]?.url ?? "").searchParams.get("pot")).toBe("POTOKEN-for-test");
-  });
-
-  test("a session-bound client asks for its token without the video", async () => {
-    const yt = fakeYouTube({ player: () => playable(ID) });
-    const videoIds: string[] = [];
-    await new Ytdl({
-      fetch: yt.fetch,
-      playerId: PLAYER_ID,
-      clients: [Client.TvSimply],
-      getPoToken: async (request) => {
-        videoIds.push(request.videoId);
-        return "POTOKEN-for-test";
-      },
-    }).getInfo(ID);
-    expect(videoIds).toEqual([""]);
   });
 
   test("a failing hook fails its rung without hiding earlier outcomes", async () => {
@@ -153,12 +138,12 @@ describe("client order", () => {
 
   test("the clients option is the priority order", async () => {
     const yt = fakeYouTube({ player: () => unplayable("UNPLAYABLE", "") });
-    const ytdl = new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: [Client.Tv, Client.VisionOS] });
+    const ytdl = new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: [Client.WebEmbedded, Client.VisionOS] });
     await rejection(ytdl.getInfo(ID));
-    expect(yt.clients()).toEqual([TV, VISIONOS]);
+    expect(yt.clients()).toEqual([WEB_EMBEDDED, VISIONOS]);
   });
 
-  test.each([[[]], [["visionos", "visionos"]], [["nope"]], [["mweb"]], [["web_creator"]]])(
+  test.each([[[]], [["visionos", "visionos"]], [["nope"]], [["android"]], [["mweb"]], [["web_creator"]]])(
     "clients %p fails construction",
     (clients) => {
       expect(() => new Ytdl({ clients: clients as Client[] })).toThrow(
@@ -282,6 +267,47 @@ describe("resume", () => {
     const before = yt.clients().length;
     expect((await ytdl.getInfo(ID)).client).toBe("tv");
     expect(yt.clients().slice(before)).toEqual([TV]);
+  });
+
+  test("onRetry destroying the stream leaves no unhandled rejection and starts no request", async () => {
+    const content = Uint8Array.from({ length: 3000 }, (_, index) => index % 251);
+    const yt = fakeYouTube({
+      player: () =>
+        playable(ID, [
+          audioFormat(251, {
+            url: `${MEDIA_HOST}?itag=251&expire=4102444800`,
+            contentLength: String(content.length),
+          }),
+        ]),
+      media: (url) => {
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        return start >= 1000 ? new Response("", { status: 403 }) : new Response(content.slice(start, end + 1));
+      },
+    });
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      let requestsAtDestroy = -1;
+      const stream = new Ytdl({ fetch: yt.fetch }).download(ID, {
+        chunkSize: 1000,
+        onRetry: () => {
+          requestsAtDestroy = yt.requests.length;
+          stream.destroy();
+        },
+      });
+      stream.on("error", () => {});
+      stream.resume();
+      await new Promise((resolve) => stream.once("close", resolve));
+      await Bun.sleep(20);
+
+      expect(unhandled).toEqual([]);
+      expect(requestsAtDestroy).toBeGreaterThan(0);
+      expect(yt.requests).toHaveLength(requestsAtDestroy);
+      expect(yt.visitorFetches()).toBe(1);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
   });
 });
 

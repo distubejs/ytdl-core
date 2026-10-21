@@ -1,10 +1,10 @@
 import { ignore } from "../http.ts";
 import { CLIENTS, type Client, userAgentHeader } from "../clients.ts";
 import { redact, YtdlError } from "../errors.ts";
-import { parseFormat, sameFormat } from "../formats.ts";
-import type { SabrSource } from "../formats.ts";
-import type { FormatMetadata } from "../types.ts";
-import { type ReadEnd, type Session } from "./session.ts";
+import { type FormatMetadata, parseFormat, sameFormat } from "../formats.ts";
+import type { VideoInfo } from "../info.ts";
+import { at, isRecord, list } from "../json.ts";
+import type { Session } from "./session.ts";
 
 const SABR_REQUEST_RETRIES = 2;
 
@@ -16,14 +16,16 @@ interface Track {
   readonly sabr: SabrFormat;
 }
 
-function tracks(source: SabrSource, client: Client, build: BuildSabrFormat): Track[] {
-  return source.formats.flatMap((entry) => {
-    const metadata = parseFormat(entry, client)?.metadata;
-    if (!metadata) return [];
-    // `buildSabrFormat` reads YouTube.js's snake_case `is_drc` and `audio_track`, not InnerTube's fields.
-    const built = build(entry as unknown as Parameters<BuildSabrFormat>[0]);
-    return [{ metadata, sabr: { ...built, isDrc: metadata.isDrc, audioTrackId: metadata.audioTrack?.id } }];
-  });
+function tracks(info: VideoInfo, client: Client, build: BuildSabrFormat): Track[] {
+  return list(at(info.playerResponse, "streamingData", "adaptiveFormats"))
+    .filter(isRecord)
+    .flatMap((entry) => {
+      const metadata = parseFormat(entry, client)?.metadata;
+      if (!metadata) return [];
+      // `buildSabrFormat` reads YouTube.js's snake_case `is_drc` and `audio_track`, not InnerTube's fields.
+      const built = build(entry as unknown as Parameters<BuildSabrFormat>[0]);
+      return [{ metadata, sabr: { ...built, isDrc: metadata.isDrc, audioTrackId: metadata.audioTrack?.id } }];
+    });
 }
 
 function cheapestAudio(available: readonly Track[]): Track | undefined {
@@ -45,16 +47,17 @@ export async function* readSabr(
   session: Session,
   start: number,
   last: number,
+  total: number | undefined,
   startTimeMs: number | undefined,
   signal: AbortSignal,
-): AsyncGenerator<Uint8Array, ReadEnd, undefined> {
+): AsyncGenerator<Uint8Array, void, undefined> {
   const [{ SabrStream }, { buildSabrFormat, EnabledTrackTypes }] = await Promise.all([
     import("googlevideo/sabr-stream"),
     import("googlevideo/utils"),
   ]);
   let position = start;
-  const switched = (cause: YtdlError): "switched" => {
-    if (startTimeMs === undefined) return "switched";
+  const switched = (cause: YtdlError): void => {
+    if (startTimeMs === undefined) return;
     const { itag } = session.format;
     throw new YtdlError("NO_FORMAT", `itag ${itag}: the resumed format has a URL and cannot start at a time`, {
       cause,
@@ -67,25 +70,23 @@ export async function* readSabr(
       }
       continue;
     }
-    const { info, format, input } = session;
-    const source = input.sabr(info);
-    if (!source) {
-      throw new YtdlError("INVALID_STATE", `itag ${format.itag}: this instance holds no SABR session for the info`);
-    }
-    const available = tracks(source, format.client, buildSabrFormat);
+    const { info, format, delivery } = session;
+    const source = info.sabr;
+    if (!source) throw new YtdlError("NO_FORMAT", `itag ${format.itag}: the info has no SABR session`);
+    const available = tracks(info, format.client, buildSabrFormat);
     const wanted = available.find((track) => sameFormat(track.metadata, format))?.sabr;
     // SABR has no video-only session, and cancelling either track aborts both.
     const audio = format.hasVideo ? cheapestAudio(available)?.sabr : wanted;
     if (!wanted || !audio) throw new YtdlError("NO_FORMAT", `itag ${format.itag}: missing from the SABR session`);
     const client = CLIENTS[format.client];
-    const mint = input.mintPoToken;
+    const mint = delivery.mintPoToken;
     let mintFailure: unknown;
     const stream = new SabrStream({
       videoId: info.videoDetails.id,
       fetchFunction: ((url: string | URL | Request, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
         for (const [name, value] of Object.entries(userAgentHeader(format.client))) headers.set(name, value);
-        return input.fetch(url, { ...init, headers });
+        return delivery.fetch(url, { ...init, headers });
       }) as typeof fetch,
       serverAbrStreamingUrl: source.url,
       videoPlaybackUstreamerConfig: source.config,
@@ -124,11 +125,12 @@ export async function* readSabr(
         offset += chunk.length;
         if (to > from) {
           position += to - from;
+          session.progress(to - from, total);
           yield chunk.subarray(from, to);
         }
-        if (position > last) return "complete";
+        if (position > last) return;
       }
-      if (last === Infinity) return "complete";
+      if (last === Infinity) return;
       failure = new Error(`session ended at byte ${offset}`);
     } catch (error) {
       signal.throwIfAborted();

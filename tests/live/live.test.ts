@@ -4,11 +4,10 @@ import {
   Client,
   chooseFormat,
   createPoTokenProvider,
-  Filter,
-  type FormatMetadata,
+  type Filter,
+  type Media,
   Quality,
   Ytdl,
-  type VideoFormat,
   type VideoInfo,
 } from "../../src/index.ts";
 
@@ -32,12 +31,8 @@ afterAll(() => {
   if (LIVE) console.log(`live check on host "${HOST}":\n${rows.join("\n")}`);
 });
 
-async function read(yt: Ytdl, info: VideoInfo, format: VideoFormat, start: number, length: number): Promise<Buffer> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of yt.download(info, { format, range: { start, end: start + length - 1 } })) {
-    chunks.push(chunk as Uint8Array);
-  }
-  return Buffer.concat(chunks);
+async function read(media: Media, start: number, length: number): Promise<Buffer> {
+  return Buffer.concat(await media.read({ range: { start, end: start + length - 1 } }).toArray());
 }
 
 const withoutDirectUrls = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -53,11 +48,15 @@ const withoutDirectUrls = (async (input: string | URL | Request, init?: RequestI
 
 async function plays(label: string, yt: Ytdl, id: string, offsets: readonly number[] = [0]): Promise<VideoInfo> {
   const info = await yt.getInfo(id);
-  const format = chooseFormat(info.formats, { quality: "highestaudio", filter: "audioonly" });
+  const format = chooseFormat(info.formats, {
+    quality: Quality.HighestAudio,
+    filter: { hasAudio: true, hasVideo: false },
+  });
+  const media = yt.open(info, format);
   const size = format.contentLength ?? 0;
   for (const offset of offsets) {
     const start = offset === 0 ? 0 : Math.floor(size * offset);
-    expect((await read(yt, info, format, start, 256 * 1024)).length).toBe(Math.min(256 * 1024, size - start));
+    expect((await read(media, start, 256 * 1024)).length).toBe(Math.min(256 * 1024, size - start));
   }
   rows.push(`  ${label} ${id}: ${info.client}, itag ${format.itag}, offsets ${offsets.join(", ")}`);
   return info;
@@ -83,8 +82,8 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     async () => {
       const sabr = new Ytdl({ fetch: withoutDirectUrls });
       const cases: [string, ChooseFormatOptions, readonly number[]][] = [
-        [VIDEOS.long, { quality: Quality.HighestAudio, filter: Filter.AudioOnly }, [0.0079, 0.96]],
-        [VIDEOS.normal, { quality: "highestvideo", filter: (format) => format.height === 1080 }, [0, 0.5]],
+        [VIDEOS.long, { quality: Quality.HighestAudio, filter: { hasAudio: true, hasVideo: false } }, [0.0079, 0.96]],
+        [VIDEOS.normal, { quality: Quality.HighestVideo, filter: (format) => format.height === 1080 }, [0, 0.5]],
       ];
       for (const [id, choice, offsets] of cases) {
         const info = await sabr.getInfo(id);
@@ -93,12 +92,13 @@ describe.skipIf(!LIVE)("real YouTube", () => {
         const direct = await yt.getInfo(id);
         const directFormat = chooseFormat(direct.formats, { format });
         expect(directFormat.url).toBeString();
+        const [sabrMedia, directMedia] = [sabr.open(info, format), yt.open(direct, directFormat)];
         const size = format.contentLength ?? 0;
         for (const offset of offsets) {
           const start = Math.floor(size * offset);
-          const bytes = await read(sabr, info, format, start, 1024 * 1024);
+          const bytes = await read(sabrMedia, start, 1024 * 1024);
           expect(bytes.length).toBe(Math.min(1024 * 1024, size - start));
-          expect(bytes.equals(await read(yt, direct, directFormat, start, 1024 * 1024))).toBe(true);
+          expect(bytes.equals(await read(directMedia, start, 1024 * 1024))).toBe(true);
         }
         rows.push(`  sabr ${id}: ${info.client}, itag ${format.itag}, offsets ${offsets.join(", ")}`);
       }
@@ -168,14 +168,14 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     TIMEOUT,
   );
 
-  async function streams(label: string, filter: (format: FormatMetadata) => boolean): Promise<void> {
+  async function streams(label: string, filter: Filter): Promise<void> {
     const info = await yt.getInfo(VIDEOS.live);
     expect(info.videoDetails.isLive).toBe(true);
     const format = chooseFormat(info.formats, { quality: Quality.Lowest, filter });
     const controller = new AbortController();
     let bytes = 0;
     const started = Date.now();
-    const stream = yt.download(info, { format, signal: controller.signal });
+    const stream = yt.open(info, format).read({ signal: controller.signal });
     await new Promise<void>((resolve, reject) => {
       stream.on("data", (chunk: Uint8Array) => {
         bytes += chunk.length;
@@ -188,13 +188,24 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       stream.on("end", resolve);
     });
     expect(bytes).toBeGreaterThan(0);
-    rows.push(`  ${label} ${VIDEOS.live}: ${info.client}, itag ${format.itag}, ${bytes} bytes in 30 s`);
+    rows.push(
+      `  ${label} ${VIDEOS.live}: ${info.client}, itag ${format.itag} at ${format.bitrate} bps, ${bytes} bytes in 30 s`,
+    );
   }
 
   test("live stream over HLS, 30 s of segments", () => streams("live hls", (format) => format.isHLS), TIMEOUT);
   test(
     "live stream over DASH, 30 s of segments",
-    () => streams("live dash", (format) => format.isLive && !format.isHLS),
+    () => streams("live dash", { isLive: true, hasAudio: true, hasVideo: false }),
+    TIMEOUT,
+  );
+
+  test.each([Client.VisionOS, Client.WebEmbedded, Client.Tv])(
+    "the %s client plays on its own",
+    async (client) => {
+      const info = await plays(client, new Ytdl({ clients: [client] }), VIDEOS.normal);
+      expect(info.client).toBe(client);
+    },
     TIMEOUT,
   );
 

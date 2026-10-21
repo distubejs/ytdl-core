@@ -1,6 +1,6 @@
 ---
 title: Download
-description: Stream a format as a Node or web stream, with ranges, progress and cancellation.
+description: Stream a format with ranges, progress and cancellation, or read one format many times.
 sidebar:
   order: 6
 ---
@@ -9,7 +9,7 @@ sidebar:
 
 ```ts
 import { createWriteStream } from "node:fs";
-import { Filter, Quality } from "@distube/ytdl-core";
+import { Quality } from "@distube/ytdl-core";
 
 yt.download(url, { quality: Quality.Highest }).pipe(createWriteStream("video.mp4"));
 ```
@@ -21,16 +21,31 @@ const info = await yt.getInfo(url);
 yt.download(info, { quality: Quality.HighestAudio });
 ```
 
-## Web streams
+## Read one format many times
 
-`downloadReadableStream` takes the same options and returns a `ReadableStream<Uint8Array>`:
+`open` takes an info and one of its formats and returns a `Media` without a request. Each `read` streams it with the same options as `download`, except the format choice:
 
 ```ts
-import { Writable } from "node:stream";
+const media = yt.open(info, chooseFormat(info.formats, { quality: Quality.HighestAudio }));
 
-const stream = yt.downloadReadableStream(info, { quality: Quality.HighestAudio, filter: Filter.AudioOnly });
+media.read({ range: { start: 0, end: 1_048_575 } }).pipe(createWriteStream("head.webm"));
+media.read({ startTimeMs: 90_000 }); // a SABR format only, see below
+```
+
+When a read resumes on a fresh lookup, `media.info` and `media.format` become the fresh ones and later reads start from them, so a seek after an hour doesn't look the video up again. `open` throws `NO_FORMAT` for a format that isn't in `info.formats`.
+
+## Web streams
+
+Convert the Node stream with `Readable.toWeb`:
+
+```ts
+import { Readable, Writable } from "node:stream";
+
+const stream = Readable.toWeb(yt.download(info, { quality: Quality.HighestAudio }));
 await stream.pipeTo(Writable.toWeb(createWriteStream("audio.webm")));
 ```
+
+Cancelling the web stream destroys the download and aborts its requests.
 
 ## Byte ranges
 
@@ -55,7 +70,6 @@ The stream sends the format's initialization segment first, then media to the en
 
 ```ts
 yt.download(info, {
-  onInfo: (info, format) => console.log("streaming itag", format.itag),
   onProgress: ({ downloaded, total }) => console.log(`${downloaded} / ${total}`),
   onRetry: ({ attempt, client, reason }) => console.log("resuming", attempt, client, reason),
 });
@@ -72,7 +86,7 @@ const stream = yt.download(info, { signal: controller.signal });
 controller.abort();
 ```
 
-Destroying the stream works too: `stream.destroy()`, or `stream.cancel()` on a web stream.
+`stream.destroy()` stops it the same way.
 
 ## Resume
 
@@ -80,4 +94,4 @@ YouTube cuts media URLs off, often about a minute in, and they expire after a fe
 
 ## All options
 
-See [`DownloadOptions`](../../api/interfaces/downloadoptions/), including `chunkSize` and `highWaterMark` for tuning.
+See [`DownloadOptions`](../../api/interfaces/downloadoptions/) and [`ReadOptions`](../../api/interfaces/readoptions/), including `chunkSize` and `highWaterMark` for tuning.

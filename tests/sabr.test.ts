@@ -31,7 +31,7 @@ function setup({ formats = FORMATS, player, media, failUntilResumed, getPoToken,
   const yt = fakeYouTube({ player: player ?? (() => sabrPlayable(ID, formats)), media });
   const failOn = failUntilResumed ? (index: number) => index > 0 && yt.clients().length === 1 : undefined;
   const sabr = sabrServer({ formats, failOn, ...server });
-  return { sabr, ytdl: new Ytdl({ fetch: sabr.fetch(yt.fetch), getPoToken, playerId: PLAYER_ID }) };
+  return { yt, sabr, ytdl: new Ytdl({ fetch: sabr.fetch(yt.fetch), getPoToken, playerId: PLAYER_ID }) };
 }
 
 function recorder() {
@@ -109,6 +109,48 @@ describe("SABR delivery", () => {
       const { body } = await download(ytdl, { format: pick }, info);
       expect(body).toEqual(Buffer.from(variant.bytes));
     }
+  });
+
+  test("a cloned info streams a SABR format on another instance without a lookup", async () => {
+    const info = structuredClone(await setup().ytdl.getInfo(ID));
+    const other = setup();
+    const { body } = await download(other.ytdl, { quality: 251 }, info);
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes));
+    expect(other.yt.playerCalls).toEqual([]);
+  });
+
+  test("a spread info keeps its SABR session", async () => {
+    const { yt, ytdl } = setup();
+    const info = await ytdl.getInfo(ID);
+    const lookups = yt.playerCalls.length;
+    const { body } = await download(ytdl, { quality: 251 }, { ...info });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes));
+    expect(yt.playerCalls).toHaveLength(lookups);
+  });
+
+  test("opening a format the info does not list throws NO_FORMAT", async () => {
+    const { ytdl } = setup();
+    const info = await ytdl.getInfo(ID);
+    const foreign = { ...info.formats[0]!, itag: 18 };
+
+    expect(() => ytdl.open(info, foreign)).toThrow(expect.objectContaining({ code: "NO_FORMAT" }));
+  });
+
+  test("an opened format reads twice through one SABR session lookup", async () => {
+    const { yt, ytdl } = setup();
+    const info = await ytdl.getInfo(ID);
+    const lookups = yt.playerCalls.length;
+    const media = ytdl.open(info, info.formats[0]!);
+    const head = Buffer.concat(await media.read({ range: { start: 0, end: 999 } }).toArray());
+    const tail = Buffer.concat(await media.read({ range: { start: 40_000 } }).toArray());
+
+    expect([head, tail]).toEqual([
+      Buffer.from(AUDIO.bytes.subarray(0, 1000)),
+      Buffer.from(AUDIO.bytes.subarray(40_000)),
+    ]);
+    expect(yt.playerCalls).toHaveLength(lookups);
   });
 
   test("a range yields exactly its bytes", async () => {
@@ -190,7 +232,7 @@ describe("SABR delivery", () => {
     expect(sabr.requests.length).toBe(sent);
   });
 
-  test("attestation mints a token with an empty videoId and the info's visitor", async () => {
+  test("attestation mints a token bound to the video ID", async () => {
     const calls: PoTokenRequest[] = [];
     const { sabr, ytdl } = setup({
       requireAttestation: true,
@@ -202,9 +244,7 @@ describe("SABR delivery", () => {
     const { body } = await download(ytdl, { quality: 251 });
 
     expect(body).toEqual(Buffer.from(AUDIO.bytes));
-    expect(calls).toContainEqual(
-      expect.objectContaining({ videoId: "", client: "visionos", visitorData: "VISITOR-1" }),
-    );
+    expect(calls).toEqual([expect.objectContaining({ contentBinding: ID, client: "visionos" })]);
     expect(sabr.requests.some((request) => request.poToken)).toBe(true);
   });
 

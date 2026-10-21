@@ -1,14 +1,100 @@
 import type { Client } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { at, isRecord, type Json, num, str } from "./json.ts";
-import type { ChooseFormatOptions, Filter, FormatCriteria, FormatMetadata, Quality, VideoFormat } from "./types.ts";
+
+/**
+ * Named format qualities for `chooseFormat` and `download`.
+ * @enum
+ */
+export const Quality = {
+  /** The top format when ranked by known size, then audio and video together, then resolution and bitrate. */
+  Highest: "highest",
+  /** The bottom format of the `Highest` ranking. */
+  Lowest: "lowest",
+  /** The format with the best audio; among equals, the smallest video. */
+  HighestAudio: "highestaudio",
+  /** The format with the smallest audio. */
+  LowestAudio: "lowestaudio",
+  /** The format with the best video; among equals, the smallest audio. */
+  HighestVideo: "highestvideo",
+  /** The format with the smallest video. */
+  LowestVideo: "lowestvideo",
+} as const;
+
+/** A `Quality` value, an itag, or itags tried in order. */
+export type Quality = (typeof Quality)[keyof typeof Quality] | number | readonly number[];
+
+/** Format fields that must all match. A codec matches exactly or by its family before the first `.`. */
+export interface FormatCriteria {
+  readonly hasAudio?: boolean;
+  readonly hasVideo?: boolean;
+  readonly audioCodec?: string;
+  readonly videoCodec?: string;
+  readonly container?: string;
+  readonly isDrc?: boolean;
+  readonly isLive?: boolean;
+}
+
+type SingleFilter = FormatCriteria | ((format: FormatMetadata) => boolean);
+
+/** Criteria, a predicate, or a list of those tried in order. */
+export type Filter = SingleFilter | readonly SingleFilter[];
+
+export interface ChooseFormatOptions {
+  /**
+   * A `Quality` value, an itag, or itags tried in order.
+   * @defaultValue `Quality.Highest`
+   */
+  readonly quality?: Quality;
+  /**
+   * `FormatCriteria`, `(format) => boolean`, or a list of those. A list picks with the first entry that
+   * yields a format under `quality`.
+   */
+  readonly filter?: Filter;
+  /** Wins over `quality` and `filter`. */
+  readonly format?: VideoFormat;
+}
+
+export interface FormatMetadata {
+  readonly itag: number;
+  readonly mimeType: string;
+  /** `mp4`, `webm`, `ts` and so on. */
+  readonly container: string;
+  readonly codecs: string;
+  readonly videoCodec: string | undefined;
+  readonly audioCodec: string | undefined;
+  readonly bitrate: number | undefined;
+  /** Kbps, for formats with audio. */
+  readonly audioBitrate: number | undefined;
+  readonly audioSampleRate: number | undefined;
+  readonly audioChannels: number | undefined;
+  readonly width: number | undefined;
+  readonly height: number | undefined;
+  readonly fps: number | undefined;
+  readonly qualityLabel: string | undefined;
+  readonly contentLength: number | undefined;
+  readonly approxDurationMs: number | undefined;
+  readonly audioTrack: { readonly id: string; readonly name: string; readonly isDefault: boolean } | undefined;
+  /** Stable-volume (DRC) audio. It shares its itag with the original, so match formats with all three of itag, `isDrc` and `audioTrack`. */
+  readonly isDrc: boolean;
+  readonly hasAudio: boolean;
+  readonly hasVideo: boolean;
+  readonly isLive: boolean;
+  readonly isHLS: boolean;
+  /** The client that served this format; resume asks it first. */
+  readonly client: Client;
+}
+
+export interface VideoFormat extends FormatMetadata {
+  /** Ready to request: solved, with any PO token attached. `undefined` for a format YouTube serves only through SABR; `download` streams it. */
+  readonly url: string | undefined;
+}
 
 export interface SabrSource {
   /** `serverAbrStreamingUrl` with `n` solved. */
   readonly url: string;
   /** `videoPlaybackUstreamerConfig`. */
   readonly config: string;
-  readonly formats: readonly Json[];
 }
 
 export interface RawFormat {
@@ -102,7 +188,7 @@ export function sabrSession(player: Json): SabrSource | undefined {
   );
   const adaptive = at(player, "streamingData", "adaptiveFormats");
   if (!url || !config || !Array.isArray(adaptive)) return undefined;
-  return { url, config, formats: adaptive.filter(isRecord) };
+  return { url, config };
 }
 
 export function parseFormats(player: Json, client: Client): RawFormat[] {
@@ -160,16 +246,7 @@ const sortFormats = compare([
   audioEncoding,
 ]);
 
-type NamedFilter = Extract<Filter, string>;
 type Matcher = (format: FormatMetadata) => boolean;
-
-const NAMED_FILTERS: Readonly<Record<NamedFilter, FormatCriteria>> = {
-  audioandvideo: { hasAudio: true, hasVideo: true },
-  video: { hasVideo: true },
-  videoonly: { hasVideo: true, hasAudio: false },
-  audio: { hasAudio: true },
-  audioonly: { hasAudio: true, hasVideo: false },
-};
 
 const CRITERIA: Readonly<Record<keyof FormatCriteria, "boolean" | "string">> = {
   hasAudio: "boolean",
@@ -191,9 +268,13 @@ function fieldMatches(format: FormatMetadata, key: keyof FormatCriteria, wanted:
 
 function matcher(filter: unknown): Matcher {
   if (typeof filter === "function") return (format) => Boolean(filter(format));
-  const criteria =
-    typeof filter === "string" && Object.hasOwn(NAMED_FILTERS, filter) ? NAMED_FILTERS[filter as NamedFilter] : filter;
-  if (!isRecord(criteria)) throw new YtdlError("INVALID_ARGUMENT", `Unknown filter ${JSON.stringify(filter)}`);
+  if (!isRecord(filter)) {
+    throw new YtdlError(
+      "INVALID_ARGUMENT",
+      `Unknown filter ${JSON.stringify(filter)}; pass criteria such as { hasAudio: true, hasVideo: false } or a predicate`,
+    );
+  }
+  const criteria = filter;
   const fields: [keyof FormatCriteria, string | boolean][] = [];
   for (const [key, wanted] of Object.entries(criteria)) {
     if (wanted === undefined) continue;

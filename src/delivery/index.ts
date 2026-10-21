@@ -1,58 +1,149 @@
-import { ignore } from "../http.ts";
-import { Readable } from "node:stream";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { addAbortSignal, Readable } from "node:stream";
+import type { Client } from "../clients.ts";
 import { YtdlError } from "../errors.ts";
-import type { SabrSource } from "../formats.ts";
-import type { DownloadOptions, VideoFormat, VideoInfo } from "../types.ts";
+import { ignore } from "../http.ts";
+import type { ChooseFormatOptions, VideoFormat } from "../formats.ts";
+import type { VideoInfo } from "../info.ts";
+import type { LookupOptions } from "../ytdl.ts";
 import { readDashLive } from "./dash.ts";
 import { readLive } from "./hls.ts";
 import { readSabr } from "./sabr.ts";
-import { readBody, type ReadEnd, Session } from "./session.ts";
+import { readBody, Session } from "./session.ts";
+
+export interface ReadOptions extends LookupOptions {
+  /** Inclusive byte range of the format. */
+  readonly range?: { readonly start?: number; readonly end?: number };
+  /**
+   * Milliseconds to start at, for a format without a `url` and without `range`. The stream sends the
+   * initialization segment, then media from the segment containing this time, and reports no total.
+   */
+  readonly startTimeMs?: number;
+  /**
+   * Bytes per ranged request.
+   * @defaultValue 10 MiB
+   */
+  readonly chunkSize?: number;
+  /** Stream buffer limit in bytes. */
+  readonly highWaterMark?: number;
+  /**
+   * Live only: milliseconds of segments kept buffered behind the edge.
+   * @defaultValue `20000`
+   */
+  readonly liveBuffer?: number;
+  /** Called after each chunk with the bytes received so far and the total, when known. */
+  readonly onProgress?: (event: ProgressEvent) => void;
+  /** Called before each re-resolution after a 403, an expired URL or a failed SABR session. */
+  readonly onRetry?: (event: RetryEvent) => void;
+}
+
+export interface DownloadOptions extends ChooseFormatOptions, ReadOptions {}
+
+export interface ProgressEvent {
+  readonly chunkBytes: number;
+  readonly downloaded: number;
+  readonly total: number | undefined;
+}
+
+export interface RetryEvent {
+  readonly attempt: number;
+  readonly client: Client;
+  readonly reason: string;
+}
+
+export interface Playback {
+  info: VideoInfo;
+  format: VideoFormat;
+}
 
 export interface ResumeRequest {
+  readonly info: VideoInfo;
   readonly format: VideoFormat;
   readonly attempt: number;
   readonly reason: string;
   readonly signal: AbortSignal;
 }
 
-export interface DeliveryInput {
-  readonly info: VideoInfo;
-  readonly format: VideoFormat;
+export interface Delivery {
   readonly fetch: typeof fetch;
-  readonly options: DownloadOptions;
-  readonly resume: (request: ResumeRequest) => Promise<{ readonly info: VideoInfo; readonly format: VideoFormat }>;
-  readonly sabr: (info: VideoInfo) => SabrSource | undefined;
+  readonly resume: (request: ResumeRequest) => Promise<Playback>;
   readonly mintPoToken: ((info: VideoInfo, signal: AbortSignal) => Promise<string>) | undefined;
+}
+
+/** One format of one `getInfo` result, ready to read; each read starts from the latest refreshed info. */
+export class Media {
+  readonly #delivery: Delivery;
+  readonly #playback: Playback;
+
+  constructor(delivery: Delivery, info: VideoInfo, format: VideoFormat) {
+    this.#delivery = delivery;
+    this.#playback = { info, format };
+  }
+
+  /** The info the next read starts from; a read that re-resolves replaces it. */
+  get info(): VideoInfo {
+    return this.#playback.info;
+  }
+
+  get format(): VideoFormat {
+    return this.#playback.format;
+  }
+
+  /** Streams the format's bytes as a Node `Readable`. */
+  read(options: ReadOptions = {}): Readable {
+    return deliver(this.#delivery, async () => this.#playback, options);
+  }
 }
 
 // YouTube throttles an unranged GET to about 0.03 MB/s; 10 MiB ranges read at full speed.
 const DEFAULT_CHUNK_SIZE = 10 * 1024 * 1024;
 const DEFAULT_LIVE_BUFFER_MS = 20_000;
 
-type PrepareDelivery = (signal: AbortSignal) => Promise<DeliveryInput>;
-
-interface StreamOptions {
-  readonly highWaterMark?: number | undefined;
-  readonly signal?: AbortSignal | undefined;
+export function deliver(
+  delivery: Delivery,
+  prepare: (signal: AbortSignal) => Promise<Playback>,
+  options: ReadOptions = {},
+): Readable {
+  const controller = new AbortController();
+  const chunks = generate(delivery, prepare, options, controller.signal);
+  // `Readable.from` aborts only after `return()` settles, which waits out the generator's pending request.
+  const stream = new Readable({
+    highWaterMark: options.highWaterMark,
+    read() {
+      chunks.next().then(
+        (result) => this.push(result.done ? null : result.value),
+        (error: unknown) => this.destroy(error instanceof Error ? error : new Error(String(error))),
+      );
+    },
+    destroy(error, callback) {
+      controller.abort(error ?? undefined);
+      chunks.return(undefined).catch(ignore);
+      callback(error);
+    },
+  });
+  return options.signal ? addAbortSignal(options.signal, stream) : stream;
 }
 
-async function* deliver(prepare: PrepareDelivery, signal: AbortSignal): AsyncGenerator<Uint8Array, void, undefined> {
+async function* generate(
+  delivery: Delivery,
+  prepare: (signal: AbortSignal) => Promise<Playback>,
+  options: ReadOptions,
+  signal: AbortSignal,
+): AsyncGenerator<Uint8Array, void, undefined> {
   try {
-    const input = await prepare(signal);
-    checkStartTime(input.options, input.format);
-    const session = new Session(input, signal);
-    const liveBuffer = input.options.liveBuffer ?? DEFAULT_LIVE_BUFFER_MS;
-    if (input.format.isHLS) yield* readLive(session, liveBuffer, signal);
-    else if (input.format.isLive) yield* readDashLive(session, liveBuffer, signal);
-    else yield* readFile(session, input.options, signal);
+    const playback = await prepare(signal);
+    checkStartTime(options, playback.format);
+    const session = new Session(delivery, playback, options, signal);
+    const liveBuffer = options.liveBuffer ?? DEFAULT_LIVE_BUFFER_MS;
+    if (playback.format.isHLS) yield* readLive(session, liveBuffer, signal);
+    else if (playback.format.isLive) yield* readDashLive(session, liveBuffer, signal);
+    else yield* readFile(session, options, signal);
   } catch (error) {
     signal.throwIfAborted();
     throw error;
   }
 }
 
-function checkStartTime({ startTimeMs, range }: DownloadOptions, { itag, url }: VideoFormat): void {
+function checkStartTime({ startTimeMs, range }: ReadOptions, { itag, url }: VideoFormat): void {
   if (startTimeMs === undefined) return;
   if (!Number.isFinite(startTimeMs) || startTimeMs < 0) {
     throw new YtdlError("INVALID_ARGUMENT", `startTimeMs must be a finite number from 0, got ${startTimeMs}`);
@@ -63,7 +154,7 @@ function checkStartTime({ startTimeMs, range }: DownloadOptions, { itag, url }: 
 
 async function* readFile(
   session: Session,
-  options: DownloadOptions,
+  options: ReadOptions,
   signal: AbortSignal,
 ): AsyncGenerator<Uint8Array, void, undefined> {
   const { itag, contentLength } = session.format;
@@ -81,26 +172,13 @@ async function* readFile(
     throw new YtdlError("INVALID_ARGUMENT", `Range start ${start} is outside itag ${itag}`);
   }
   const total = Number.isFinite(last) ? last - start + 1 : undefined;
-  let position = start;
+  // A resume can move the format between URL and SABR delivery; the other reader then continues.
   for (;;) {
-    const reader =
-      session.format.url === undefined
-        ? readSabr(session, position, last, startTimeMs, signal)
-        : readRanged(session, position, last, chunkSize);
-    try {
-      for (;;) {
-        const result = await reader.next();
-        if (result.done) {
-          if (result.value === "complete") return;
-          break;
-        }
-        position += result.value.length;
-        session.progress(result.value.length, total);
-        yield result.value;
-      }
-    } finally {
-      await reader.return("complete");
-    }
+    const sabr = session.format.url === undefined;
+    const position = start + session.downloaded;
+    if (sabr) yield* readSabr(session, position, last, total, startTimeMs, signal);
+    else yield* readRanged(session, position, last, total, chunkSize);
+    if ((session.format.url === undefined) === sabr) return;
   }
 }
 
@@ -108,14 +186,15 @@ async function* readRanged(
   session: Session,
   start: number,
   last: number,
+  total: number | undefined,
   chunkSize: number,
-): AsyncGenerator<Uint8Array, ReadEnd, undefined> {
+): AsyncGenerator<Uint8Array, void, undefined> {
   const { itag } = session.format;
   let position = start;
   while (position <= last) {
     const windowEnd = Math.min(position + chunkSize - 1, last);
     const url = session.format.url;
-    if (url === undefined) return "switched";
+    if (url === undefined) return;
     const response = await session.request(`${url}${url.includes("?") ? "&" : "?"}range=${position}-${windowEnd}`);
     if (!response) continue;
     const windowStart = position;
@@ -124,40 +203,14 @@ async function* readRanged(
       const bytes = piece.subarray(0, windowEnd - position + 1);
       if (bytes.length === 0) break;
       position += bytes.length;
+      session.progress(bytes.length, total);
       yield bytes;
     }
     if (position > windowEnd) continue;
     // YouTube ends a format of unknown length with a short window.
-    if (last === Infinity) return "complete";
+    if (last === Infinity) return;
     if (position === windowStart) {
       throw new YtdlError("REQUEST_FAILED", `itag ${itag}: empty media response at byte ${position}`);
     }
   }
-  return "complete";
-}
-
-export function createNodeStream(prepare: PrepareDelivery, options: StreamOptions = {}): Readable {
-  const web = createWebStream(prepare, { signal: options.signal }) as unknown as NodeReadableStream<Uint8Array>;
-  return Readable.fromWeb(web, { highWaterMark: options.highWaterMark, signal: options.signal });
-}
-
-export function createWebStream(prepare: PrepareDelivery, options: StreamOptions = {}): ReadableStream<Uint8Array> {
-  const controller = new AbortController();
-  const caller = options.signal;
-  const chunks = deliver(prepare, caller ? AbortSignal.any([controller.signal, caller]) : controller.signal);
-  const strategy = new ByteLengthQueuingStrategy({ highWaterMark: options.highWaterMark ?? 0 });
-  return new ReadableStream<Uint8Array>(
-    {
-      async pull(stream) {
-        const result = await chunks.next();
-        if (result.done) stream.close();
-        else stream.enqueue(result.value);
-      },
-      cancel(reason: unknown) {
-        controller.abort(reason);
-        chunks.return(undefined).catch(ignore);
-      },
-    },
-    strategy,
-  );
 }

@@ -25,7 +25,10 @@ describe("redaction", () => {
     });
     const ytdl = new Ytdl({ fetch: yt.fetch, playerId: "aaaa0002", clients: [Client.VisionOS, Client.Tv] });
     const retries: RetryEvent[] = [];
-    const stream = ytdl.download(ID, { filter: "audioonly", onRetry: (event) => retries.push(event) });
+    const stream = ytdl.download(ID, {
+      filter: { hasAudio: true, hasVideo: false },
+      onRetry: (event) => retries.push(event),
+    });
     const error = await new Promise<unknown>((resolve) => {
       stream.on("error", resolve);
       stream.resume();
@@ -79,5 +82,22 @@ describe("redaction", () => {
     for (const secret of ["sapisid-secret-value", "login-secret-value"]) {
       expect(visible).not.toContain(secret);
     }
+  });
+
+  test("a provider reason that echoes the cookie keeps its values out of errors", async () => {
+    const cookie = "SAPISID=sapisid-secret-value; LOGIN_INFO=login-secret-value";
+    const yt = fakeYouTube({ player: () => unplayable("UNPLAYABLE", `Blocked for ${cookie}`) });
+    const signedIn = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input) === "https://www.youtube.com/"
+        ? new Response('ytcfg.set({"LOGGED_IN":true});')
+        : yt.fetch(input, init)) as typeof fetch;
+    const error = await new Ytdl({ cookie, fetch: signedIn, playerId: "aaaa0005" })
+      .getInfo(ID)
+      .catch((caught: unknown) => caught);
+
+    expect(YtdlError.is(error)).toBe(true);
+    const visible = [...surfaces(error), JSON.stringify((error as YtdlError).attempts)].join("\n");
+    expect(visible).toContain("Blocked for");
+    for (const secret of ["sapisid-secret-value", "login-secret-value"]) expect(visible).not.toContain(secret);
   });
 });

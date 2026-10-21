@@ -1,13 +1,19 @@
 import { CLIENTS, type Client } from "./clients.ts";
-import { type AttemptRecord, YtdlError, type YtdlErrorCode, type YtdlErrorDetails } from "./errors.ts";
-import { parseFormats, type RawFormat, type SabrSource, sabrSession, sameFormat } from "./formats.ts";
-import { abortable } from "./http.ts";
-import { fetchEmbedContext, fetchVisitorData, type RequestContext, requestPlayer } from "./innertube.ts";
-import { at, type Json } from "./json.ts";
-import { classifyPlayability, prerollEnd } from "./playability.ts";
 import type { CookieAuth } from "./auth.ts";
-import { loadPlayer, type PreparedPlayer } from "./solver/index.ts";
-import type { FormatMetadata, GetPoToken, VideoFormat } from "./types.ts";
+import { type AttemptRecord, YtdlError, type YtdlErrorCode, type YtdlErrorDetails } from "./errors.ts";
+import {
+  type FormatMetadata,
+  parseFormats,
+  type SabrSource,
+  sabrSession,
+  sameFormat,
+  type VideoFormat,
+} from "./formats.ts";
+import type { InnerTube } from "./innertube.ts";
+import { at, type Json, str } from "./json.ts";
+import { classifyPlayability, prerollEnd } from "./playability.ts";
+import type { GetPoToken } from "./po-token/index.ts";
+import { loadPlayer, type PreparedPlayer, type SignedUrl } from "./solver/index.ts";
 
 export const BLOCK_PERIOD_MS = 10 * 60 * 1000;
 
@@ -37,50 +43,12 @@ export function planClients(config: PlanConfig, blocked: ReadonlyMap<Client, num
   return [...rungs.filter((rung) => !isBlocked(rung)), ...rungs.filter(isBlocked)];
 }
 
-export interface ResolverState {
-  readonly fetch: typeof fetch;
-  readonly lang: string | undefined;
-  readonly country: string | undefined;
-  readonly playerId: string | undefined;
+export interface ResolverOptions {
+  readonly innertube: InnerTube;
   readonly clients: readonly Client[];
   readonly auth: CookieAuth | undefined;
   readonly getPoToken: GetPoToken | undefined;
-  readonly blocked: Map<Client, number>;
-  visitor: Promise<string> | undefined;
-}
-
-export function requestContext(state: ResolverState, signal: AbortSignal | undefined): RequestContext {
-  return { fetch: state.fetch, lang: state.lang, country: state.country, signal };
-}
-
-export function visitorData(state: ResolverState, context: RequestContext): Promise<string> {
-  if (!state.visitor) {
-    const pending = fetchVisitorData({ ...context, signal: undefined });
-    state.visitor = pending;
-    pending.catch(() => {
-      if (state.visitor === pending) state.visitor = undefined;
-    });
-  }
-  return abortable(state.visitor, context.signal);
-}
-
-export function replaceVisitorData(
-  state: ResolverState,
-  context: RequestContext,
-  stale: string | undefined,
-): Promise<string> {
-  const current = state.visitor;
-  if (!current || stale === undefined) return fresh();
-  const settle = (value: string | undefined) =>
-    state.visitor === current && (value === undefined || value === stale) ? fresh() : visitorData(state, context);
-  return abortable(
-    current.then(settle, () => settle(undefined)),
-    context.signal,
-  );
-  function fresh(): Promise<string> {
-    state.visitor = undefined;
-    return visitorData(state, context);
-  }
+  readonly playerId: string | undefined;
 }
 
 export interface Resolution {
@@ -163,145 +131,149 @@ function failure(attempts: readonly Attempt[], videoId: string, account: boolean
   });
 }
 
-export async function resolvePlayback(
-  state: ResolverState,
-  videoId: string,
-  options: ResolveOptions,
-): Promise<Resolution> {
-  const context = requestContext(state, options.signal);
-  const attempts: Attempt[] = [];
-  let rungs = planClients(
-    { clients: state.clients, cookie: state.auth !== undefined, poToken: state.getPoToken !== undefined },
-    state.blocked,
-    Date.now(),
-  );
-  if (options.prefer) {
-    const preferred = options.prefer.flatMap((client) => rungs.filter((rung) => rung.client === client));
-    rungs = [...preferred, ...rungs.filter((rung) => !preferred.includes(rung))];
+export class Resolver {
+  readonly #options: ResolverOptions;
+  readonly #blocked = new Map<Client, number>();
+
+  constructor(options: ResolverOptions) {
+    this.#options = options;
   }
-  for (const rung of rungs) {
-    options.signal?.throwIfAborted();
-    const record = (code: AttemptRecord["code"], reason: string, extra: object = {}) =>
-      attempts.push({ client: rung.client, code, reason, ...extra });
-    let replacedVisitor = false;
-    for (;;) {
-      try {
-        const result = await tryRung(state, context, rung, videoId, options);
-        if ("formats" in result) {
-          return { ...result, attempts: records(attempts) };
-        }
-        if (result.code === "BOT_CHECK" && !rung.signedIn && !replacedVisitor) {
-          replacedVisitor = true;
-          if (
-            await replaceVisitorData(state, context, result.visitorData).then(
-              () => true,
-              () => false,
+
+  block(client: Client): void {
+    this.#blocked.set(client, Date.now());
+  }
+
+  async resolve(videoId: string, options: ResolveOptions): Promise<Resolution> {
+    const { innertube, clients, auth, getPoToken } = this.#options;
+    const attempts: Attempt[] = [];
+    let rungs = planClients(
+      { clients, cookie: auth !== undefined, poToken: getPoToken !== undefined },
+      this.#blocked,
+      Date.now(),
+    );
+    if (options.prefer) {
+      const preferred = options.prefer.flatMap((client) => rungs.filter((rung) => rung.client === client));
+      rungs = [...preferred, ...rungs.filter((rung) => !preferred.includes(rung))];
+    }
+    for (const rung of rungs) {
+      options.signal?.throwIfAborted();
+      const record = (code: AttemptRecord["code"], reason: string, extra: object = {}) =>
+        attempts.push({ client: rung.client, code, reason, ...extra });
+      let replacedVisitor = false;
+      for (;;) {
+        try {
+          const result = await this.#tryRung(rung, videoId, options);
+          if ("formats" in result) {
+            return { ...result, attempts: records(attempts) };
+          }
+          if (result.code === "BOT_CHECK" && !rung.signedIn && !replacedVisitor) {
+            replacedVisitor = true;
+            if (
+              await innertube.replaceVisitorData(result.visitorData, options.signal).then(
+                () => true,
+                () => false,
+              )
             )
-          )
-            continue;
+              continue;
+          }
+          record(result.code, result.reason, result);
+        } catch (error) {
+          options.signal?.throwIfAborted();
+          if (YtdlError.is(error)) record(error.code, error.message, { cause: error });
+          else record("REQUEST_FAILED", error instanceof Error ? error.message : String(error), { cause: error });
         }
-        record(result.code, result.reason, result);
-      } catch (error) {
-        options.signal?.throwIfAborted();
-        if (YtdlError.is(error)) record(error.code, error.message, { cause: error });
-        else record("REQUEST_FAILED", error instanceof Error ? error.message : String(error), { cause: error });
+        break;
       }
-      break;
     }
+    throw failure(attempts, videoId, auth !== undefined);
   }
-  throw failure(attempts, videoId, state.auth !== undefined);
+
+  async #tryRung(
+    rung: Rung,
+    videoId: string,
+    options: ResolveOptions,
+  ): Promise<Omit<Resolution, "attempts"> | RungFailure> {
+    const { innertube, auth, getPoToken, playerId } = this.#options;
+    const { signal } = options;
+    const client = CLIENTS[rung.client];
+    let player: PreparedPlayer | undefined;
+    if (client.needsPlayer) {
+      // The TV client answers "page needs to be reloaded" without a signature timestamp, even for metadata.
+      player = await loadPlayer({ fetch: innertube.fetch, playerId, signal });
+    }
+    const embed = client.embedded ? await innertube.embedContext(videoId, signal) : undefined;
+    const dataSyncId = rung.signedIn ? await auth?.dataSyncId(signal) : undefined;
+    // A signed-in request binds to the account's Data Sync ID instead of visitor data.
+    const visitor = dataSyncId ?? embed?.visitorData ?? (await innertube.visitorData(signal));
+    const poToken =
+      client.poToken && getPoToken
+        ? await getPoToken({ contentBinding: videoId, client: rung.client, signal })
+        : undefined;
+    const authHeaders = rung.signedIn ? await auth?.headers(client.origin, signal) : undefined;
+    const response = await innertube.player(
+      {
+        client: rung.client,
+        videoId,
+        visitorData: visitor,
+        signatureTimestamp: player?.signatureTimestamp,
+        poToken,
+        authHeaders,
+        embed,
+      },
+      signal,
+    );
+    const answeredAt = Date.now();
+    const playability = classifyPlayability(response);
+    if (!playability.ok) {
+      if (rung.signedIn && playability.code === "BOT_CHECK") {
+        return { code: "AUTH_FAILED", reason: `${playability.reason} (signed-in request was treated as logged out)` };
+      }
+      return { ...playability, visitorData: visitor };
+    }
+    const answeredId = at(response, "videoDetails", "videoId");
+    if (answeredId !== videoId) {
+      return { code: "REQUEST_FAILED", reason: `${client.name} answered for another video (${String(answeredId)})` };
+    }
+    const isLive = at(response, "videoDetails", "isLive") === true;
+    const hls = str(at(response, "streamingData", "hlsManifestUrl"));
+    const raw = parseFormats(response, rung.client);
+    if (raw.length === 0 && !(isLive && hls)) {
+      return { code: "NO_FORMAT", reason: `${client.name} returned no downloadable format` };
+    }
+    const wanted = options.format;
+    if (wanted && !wanted.isHLS && !raw.some((format) => sameFormat(format.metadata, wanted))) {
+      return { code: "NO_FORMAT", reason: `${client.name} does not offer itag ${wanted.itag}` };
+    }
+    const session = raw.some((format) => !format.url && !format.signatureCipher) ? sabrSession(response) : undefined;
+    const signed = raw.filter((format) => format.url || format.signatureCipher);
+    const inputs: SignedUrl[] = [...signed, ...(hls ? [{ url: hls }] : []), ...(session ? [{ url: session.url }] : [])];
+    if (!player && inputs.some((input) => input.signatureCipher)) {
+      throw new YtdlError("PLAYER_SOLVE_FAILED", `${client.name} sent ciphered formats but no player was loaded`);
+    }
+    const outputs = player ? await player.solve(inputs) : inputs.map((input) => input.url);
+    const urls = new Map(signed.map((format, index) => [format, outputs[index]]));
+    const hlsManifestUrl = hls ? outputs[signed.length] : undefined;
+    const sabrUrl = session ? outputs.at(-1) : undefined;
+    const formats = raw.map((format): VideoFormat => {
+      const url = urls.get(format) ?? format.url;
+      return { ...format.metadata, url: url && poToken ? withPoToken(url, poToken) : url };
+    });
+    const sabr = session && sabrUrl ? { ...session, url: sabrUrl } : undefined;
+    return {
+      client: rung.client,
+      visitorData: dataSyncId ? undefined : visitor,
+      player: response,
+      formats,
+      hlsManifestUrl,
+      sabr,
+      expiresAt: expiry([...formats.map((format) => format.url), sabr?.url], Date.now()),
+      playableAt: prerollEnd(response, answeredAt),
+    };
+  }
 }
 
-async function tryRung(
-  state: ResolverState,
-  context: RequestContext,
-  rung: Rung,
-  videoId: string,
-  options: ResolveOptions,
-): Promise<Omit<Resolution, "attempts"> | RungFailure> {
-  const client = CLIENTS[rung.client];
-  let player: PreparedPlayer | undefined;
-  if (client.needsPlayer) {
-    // The TV client answers "page needs to be reloaded" without a signature timestamp, even for metadata.
-    player = await loadPlayer({ fetch: state.fetch, playerId: state.playerId, signal: options.signal });
-  }
-  const embed = client.embedded ? await fetchEmbedContext(context, videoId) : undefined;
-  const dataSyncId = rung.signedIn ? await state.auth?.dataSyncId(options.signal) : undefined;
-  // A signed-in request binds to the account's Data Sync ID instead of visitor data.
-  const visitor = dataSyncId ?? embed?.visitorData ?? (await visitorData(state, context));
-  const poToken =
-    client.poToken && state.getPoToken
-      ? await state.getPoToken({
-          videoId: client.poToken === "video" ? videoId : "",
-          client: rung.client,
-          visitorData: rung.signedIn ? undefined : visitor,
-          dataSyncId,
-          signal: options.signal,
-        })
-      : undefined;
-  const authHeaders = rung.signedIn ? await state.auth?.headers(client.origin, options.signal) : undefined;
-  const response = await requestPlayer(context, {
-    client: rung.client,
-    videoId,
-    visitorData: visitor,
-    signatureTimestamp: player?.signatureTimestamp,
-    poToken,
-    authHeaders,
-    embed,
-  });
-  const answeredAt = Date.now();
-  const playability = classifyPlayability(response);
-  if (!playability.ok) {
-    if (rung.signedIn && playability.code === "BOT_CHECK") {
-      return { code: "AUTH_FAILED", reason: `${playability.reason} (signed-in request was treated as logged out)` };
-    }
-    return { ...playability, visitorData: visitor };
-  }
-  const answeredId = at(response, "videoDetails", "videoId");
-  if (answeredId !== videoId) {
-    return { code: "REQUEST_FAILED", reason: `${client.name} answered for another video (${String(answeredId)})` };
-  }
-  const isLive = at(response, "videoDetails", "isLive") === true;
-  const hls = at(response, "streamingData", "hlsManifestUrl");
-  const hlsManifestUrl = typeof hls !== "string" ? undefined : player ? player.solveUrl({ url: hls }) : hls;
-  const raw = parseFormats(response, rung.client);
-  if (raw.length === 0 && !(isLive && hlsManifestUrl)) {
-    return { code: "NO_FORMAT", reason: `${client.name} returned no downloadable format` };
-  }
-  const wanted = options.format;
-  if (wanted && !wanted.isHLS && !raw.some((format) => sameFormat(format.metadata, wanted))) {
-    return { code: "NO_FORMAT", reason: `${client.name} does not offer itag ${wanted.itag}` };
-  }
-  const formats = solve(raw, player, poToken);
-  const session = formats.some((format) => format.url === undefined) ? sabrSession(response) : undefined;
-  const sabr = session && { ...session, url: player ? player.solveUrl({ url: session.url }) : session.url };
-  return {
-    client: rung.client,
-    visitorData: dataSyncId ? undefined : visitor,
-    player: response,
-    formats,
-    hlsManifestUrl,
-    sabr,
-    expiresAt: expiry([...formats.map((format) => format.url), sabr?.url], Date.now()),
-    playableAt: prerollEnd(response, answeredAt),
-  };
-}
-
-function solve(
-  raw: readonly RawFormat[],
-  player: PreparedPlayer | undefined,
-  poToken: string | undefined,
-): VideoFormat[] {
-  return raw.map((format) => {
-    if (!format.url && !format.signatureCipher) return { ...format.metadata, url: undefined };
-    let url = player ? player.solveUrl(format) : format.url;
-    if (!url)
-      throw new YtdlError("PLAYER_SOLVE_FAILED", `Format ${format.metadata.itag} is ciphered but no player was loaded`);
-    if (poToken) {
-      const signed = new URL(url);
-      signed.searchParams.set("pot", poToken);
-      url = signed.href;
-    }
-    return { ...format.metadata, url };
-  });
+function withPoToken(url: string, poToken: string): string {
+  const signed = new URL(url);
+  signed.searchParams.set("pot", poToken);
+  return signed.href;
 }

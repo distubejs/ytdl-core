@@ -14,19 +14,16 @@ Videos the default clients can't play without an account need the cookie of an a
 1. Install [Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY) for [Chrome](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) or [Firefox](https://addons.mozilla.org/firefox/addon/get-cookies-txt-locally/), and allow it in private windows.
 2. Open a private window, sign in to [youtube.com](https://www.youtube.com), and export with the extension. It saves `www.youtube.com_cookies.txt`.
 3. Close the private window without signing out. Signing out invalidates the cookie.
-4. Convert the file and check it on a video:
 
-```bash
-npx @distube/ytdl-core cookies www.youtube.com_cookies.txt --check aqz-KE-bpKQ
-```
-
-It reports whether the account is signed in, prints the cookie on its own line and copies it to the clipboard when it can. Paste the whole line as `cookie`:
+Pass the file's text as `cookie`. `Ytdl` keeps its youtube.com cookies and ignores the rest:
 
 ```ts
-const yt = new Ytdl({ cookie: "SAPISID=AbCdEf/GhIjKl; LOGIN_INFO=AFmmF2sw...; __Secure-3PAPISID=AbCdEf/GhIjKl; ..." });
+import { readFileSync } from "node:fs";
+
+const yt = new Ytdl({ cookie: readFileSync("www.youtube.com_cookies.txt", "utf8") });
 ```
 
-Better, keep it out of your code in a `.env` file, quoted because it contains `;` and `=`:
+A `Cookie` header works too, for example from a `.env` file, quoted because it contains `;` and `=`:
 
 ```dotenv
 YT_COOKIE="SAPISID=AbCdEf/GhIjKl; LOGIN_INFO=AFmmF2sw...; __Secure-3PAPISID=AbCdEf/GhIjKl; ..."
@@ -35,3 +32,5 @@ YT_COOKIE="SAPISID=AbCdEf/GhIjKl; LOGIN_INFO=AFmmF2sw...; __Secure-3PAPISID=AbCd
 ```ts
 const yt = new Ytdl({ cookie: process.env.YT_COOKIE });
 ```
+
+An export or header without `SAPISID` or `__Secure-3PAPISID` is signed out, and the constructor throws `INVALID_ARGUMENT`. A cookie YouTube no longer accepts fails the lookup with `AUTH_FAILED`; export a fresh one.

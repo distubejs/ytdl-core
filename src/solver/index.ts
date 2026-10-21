@@ -1,21 +1,42 @@
-import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
 import { YOUTUBE_ORIGIN } from "../clients.ts";
 import { YtdlError } from "../errors.ts";
-import { abortable, fetchText } from "../http.ts";
-import type { DropRequest, LoadReply, LoadRequest, SolveReply, SolveRequest } from "./worker.ts";
+import { abortable, fetchText, ignore } from "../http.ts";
+import { startWorker, type WorkerRpc } from "../worker-rpc.ts";
+import type { Challenge, SolverRequest } from "./worker.ts";
+
+export interface SignedUrl {
+  readonly url?: string | undefined;
+  readonly signatureCipher?: string | undefined;
+}
 
 export interface PreparedPlayer {
   readonly id: string;
   readonly signatureTimestamp: number;
-  solveUrl(format: { readonly url?: string; readonly signatureCipher?: string }): string;
+  solve(urls: readonly SignedUrl[]): Promise<string[]>;
 }
 
 const CACHE_LIMIT = 4;
-const SOLVE_WAIT_MS = 5000;
 
 const cache = new Map<string, Promise<PreparedPlayer>>();
 const handles = new WeakMap<PreparedPlayer, number>();
 let nextHandle = 0;
+let solver: WorkerRpc | undefined;
+
+function worker(): WorkerRpc {
+  if (solver) return solver;
+  const file = new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url);
+  const started = startWorker(file, {
+    onStop: () => {
+      if (solver !== started) return;
+      solver = undefined;
+      cache.clear();
+    },
+  });
+  solver = started;
+  return started;
+}
+
+const call = (rpc: WorkerRpc, request: SolverRequest) => rpc.call(request);
 
 interface LoadPlayerOptions {
   readonly fetch: typeof fetch;
@@ -37,10 +58,10 @@ export async function loadPlayer({ fetch, playerId, signal }: LoadPlayerOptions)
   for (const [oldId, old] of cache) {
     if (cache.size <= CACHE_LIMIT) break;
     cache.delete(oldId);
-    old.then(
-      (player) => current?.drop(handles.get(player)),
-      () => {},
-    );
+    old.then((player) => {
+      const handle = handles.get(player);
+      if (solver && handle !== undefined) call(solver, { kind: "drop", handle }).catch(ignore);
+    }, ignore);
   }
   return abortable(entry, signal);
 }
@@ -73,23 +94,30 @@ async function prepare(id: string, fetchFn: typeof fetch): Promise<PreparedPlaye
   const source = await fetchText(fetchFn, playerUrl(id), {}, `YouTube player ${id}`);
   const timestamp = /signatureTimestamp:(\d+)/u.exec(source)?.[1];
   if (!timestamp) throw new YtdlError("PLAYER_SOLVE_FAILED", `No signature timestamp in player ${id}`);
-  const handle = await host().load(source);
+  const rpc = worker();
+  const handle = ++nextHandle;
+  await call(rpc, { kind: "load", handle, source }).catch((cause: unknown) => {
+    throw new YtdlError("PLAYER_SOLVE_FAILED", "Could not prepare the player", { cause });
+  });
   const player: PreparedPlayer = {
     id,
     signatureTimestamp: Number(timestamp),
-    solveUrl: (format) => solveUrl(id, handle, format),
+    solve: (urls) => solveUrls(rpc, id, handle, urls),
   };
   handles.set(player, handle);
   return player;
 }
 
-function solveUrl(
-  id: string,
-  handle: number,
-  format: { readonly url?: string; readonly signatureCipher?: string },
-): string {
-  const cipher = format.signatureCipher;
-  const params = cipher === undefined ? undefined : new URLSearchParams(cipher);
+interface Target {
+  readonly url: URL;
+  readonly segments: string[];
+  readonly pathN: number;
+  readonly sigParam: string;
+  readonly challenge: Challenge | undefined;
+}
+
+function target(format: SignedUrl): Target {
+  const params = format.signatureCipher === undefined ? undefined : new URLSearchParams(format.signatureCipher);
   const raw = params ? params.get("url") : format.url;
   if (!raw || !URL.canParse(raw)) throw new YtdlError("PLAYER_SOLVE_FAILED", "Format has no valid URL");
   const url = new URL(raw);
@@ -98,96 +126,38 @@ function solveUrl(
   const segments = url.pathname.split("/");
   const pathN = url.searchParams.has("n") ? -1 : segments.indexOf("n") + 1;
   const n = url.searchParams.get("n") ?? (pathN > 0 ? segments[pathN] : undefined);
-  if (sig === undefined && n === undefined) return url.toString();
-  const solved = host().solve(handle, sig, n, id);
-  if (sig !== undefined && solved.sig !== undefined) url.searchParams.set(params?.get("sp") ?? "signature", solved.sig);
-  if (n !== undefined && solved.n !== undefined) {
-    if (pathN > 0) {
-      segments[pathN] = solved.n;
-      url.pathname = segments.join("/");
-    } else url.searchParams.set("n", solved.n);
-  }
-  return url.toString();
-}
-
-interface Host {
-  load(source: string): Promise<number>;
-  solve(handle: number, sig: string | undefined, n: string | undefined, id: string): { sig?: string; n?: string };
-  drop(handle: number | undefined): void;
-}
-
-let current: Host | undefined;
-
-function host(): Host {
-  current ??= startHost();
-  return current;
-}
-
-function startHost(): Host {
-  const { port1: solvePort, port2 } = new MessageChannel();
-  const file = import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js";
-  const worker = new Worker(new URL(file, import.meta.url), {
-    workerData: { solvePort: port2 },
-    transferList: [port2],
-  });
-  const pending = new Map<number, { resolve: (handle: number) => void; reject: (error: unknown) => void }>();
-  let seq = 0;
-  worker.unref();
-  solvePort.unref();
-
-  const fail = (error: unknown): void => {
-    if (current !== self) return;
-    current = undefined;
-    cache.clear();
-    for (const { reject } of pending.values()) reject(error);
-    pending.clear();
+  return {
+    url,
+    segments,
+    pathN,
+    sigParam: params?.get("sp") ?? "signature",
+    challenge: sig === undefined && n === undefined ? undefined : { sig, n },
   };
-  worker.on("error", fail);
-  worker.on("exit", (code) => fail(new Error(`Solver worker exited with code ${code}`)));
-  worker.on("message", (reply: LoadReply) => {
-    const waiter = pending.get(reply.handle);
-    if (!waiter) return;
-    pending.delete(reply.handle);
-    if (pending.size === 0) worker.unref();
-    if (reply.error === undefined) waiter.resolve(reply.handle);
-    else
-      waiter.reject(
-        new YtdlError("PLAYER_SOLVE_FAILED", "Could not prepare the player", { cause: new Error(reply.error) }),
-      );
-  });
-
-  const self: Host = {
-    load(source) {
-      const handle = ++nextHandle;
-      worker.ref();
-      worker.postMessage({ kind: "load", handle, source } satisfies LoadRequest);
-      return new Promise((resolve, reject) => pending.set(handle, { resolve, reject }));
-    },
-    solve(handle, sig, n, id) {
-      const flag = new Int32Array(new SharedArrayBuffer(4));
-      const request = { seq: ++seq, handle, sig, n, flag } satisfies SolveRequest;
-      solvePort.postMessage(request);
-      if (Atomics.wait(flag, 0, 0, SOLVE_WAIT_MS) === "timed-out") {
-        throw new YtdlError("PLAYER_SOLVE_FAILED", `Player ${id} did not answer in ${SOLVE_WAIT_MS} ms`);
-      }
-      const reply = receive(solvePort, request.seq);
-      if (!reply || reply.error !== undefined) {
-        const cause = new Error(reply?.error ?? "No reply from the solver worker");
-        throw new YtdlError("PLAYER_SOLVE_FAILED", `Could not solve a URL with player ${id}`, { cause });
-      }
-      return reply;
-    },
-    drop(handle) {
-      if (handle !== undefined) worker.postMessage({ kind: "drop", handle } satisfies DropRequest);
-    },
-  };
-  return self;
 }
 
-function receive(port: MessagePort, seq: number): SolveReply | undefined {
-  for (let entry = receiveMessageOnPort(port); entry; entry = receiveMessageOnPort(port)) {
-    const reply = entry.message as SolveReply;
-    if (reply.seq === seq) return reply;
+const challengeKey = ({ sig, n }: Challenge) => JSON.stringify([sig ?? null, n ?? null]);
+
+async function solveUrls(rpc: WorkerRpc, id: string, handle: number, formats: readonly SignedUrl[]): Promise<string[]> {
+  const targets = formats.map(target);
+  const unique = new Map<string, Challenge>();
+  for (const { challenge } of targets) if (challenge) unique.set(challengeKey(challenge), challenge);
+  let answers = new Map<string, Challenge>();
+  if (unique.size > 0) {
+    const challenges = [...unique.values()];
+    const solved = (await call(rpc, { kind: "solve", handle, challenges }).catch((cause: unknown) => {
+      throw new YtdlError("PLAYER_SOLVE_FAILED", `Could not solve URLs with player ${id}`, { cause });
+    })) as readonly Challenge[];
+    answers = new Map([...unique.keys()].map((key, index) => [key, solved[index] ?? {}]));
   }
-  return undefined;
+  return targets.map(({ url, segments, pathN, sigParam, challenge }) => {
+    const solved = challenge && answers.get(challengeKey(challenge));
+    if (solved?.sig !== undefined) url.searchParams.set(sigParam, solved.sig);
+    if (solved?.n !== undefined) {
+      if (pathN > 0) {
+        segments[pathN] = solved.n;
+        url.pathname = segments.join("/");
+      } else url.searchParams.set("n", solved.n);
+    }
+    return url.toString();
+  });
 }

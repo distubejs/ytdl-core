@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { CookieAuth } from "../src/auth.ts";
 import { YtdlError } from "../src/errors.ts";
 import { Ytdl } from "../src/index.ts";
@@ -6,6 +7,7 @@ import { fakeFetch } from "./fixtures/auth/fake-fetch.ts";
 
 const NOW = 1_700_000_000_000;
 const ORIGIN = "https://www.youtube.com";
+const fixture = (name: string) => readFileSync(new URL(`fixtures/auth/${name}`, import.meta.url), "utf8");
 const FULL_COOKIE =
   "PREF=hl=en; SAPISID=sapisid-value-aaaa; __Secure-1PAPISID=one-p-value-bbbb; __Secure-3PAPISID=three-p-value-cccc";
 
@@ -50,6 +52,15 @@ describe("cookie account", () => {
     expect(await auth.dataSyncId()).toBe("111||");
     expect(fetch.calls[0]?.url).toBe("https://www.youtube.com/");
     expect(new Headers(fetch.calls[0]?.init?.headers).get("Cookie")).toBe(FULL_COOKIE);
+  });
+
+  test("a Netscape export signs in with only its youtube.com cookies", async () => {
+    const fetch = fakeFetch(() => homePage(`"LOGGED_IN":true`));
+    const auth = new CookieAuth({ cookie: fixture("signed-in.txt"), fetch });
+
+    expect((await auth.headers(ORIGIN)).Cookie).toBe(
+      "SAPISID=sapisid-value-aaaa; LOGIN_INFO=login-info-value; __Secure-3PAPISID=three-p-value-cccc; PREF=hl=en",
+    );
   });
 
   test("falls back to __Secure-3PAPISID when SAPISID is missing", async () => {
@@ -117,6 +128,13 @@ describe("account options", () => {
 
   test("a signed-out cookie fails construction with INVALID_ARGUMENT and no request", () => {
     expect(() => new Ytdl({ cookie: "PREF=hl=en; __Secure-1PAPISID=one-p-value-bbbb", fetch })).toThrow(
+      expect.objectContaining({ code: "INVALID_ARGUMENT" }),
+    );
+    expect(fetch.calls).toHaveLength(0);
+  });
+
+  test("a signed-out cookie export fails construction with INVALID_ARGUMENT and no request", () => {
+    expect(() => new Ytdl({ cookie: fixture("signed-out.txt"), fetch })).toThrow(
       expect.objectContaining({ code: "INVALID_ARGUMENT" }),
     );
     expect(fetch.calls).toHaveLength(0);

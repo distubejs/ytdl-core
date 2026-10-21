@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import * as workerThreads from "node:worker_threads";
 import { YtdlError } from "../src/errors.ts";
-import type { PoTokenRequest } from "../src/types.ts";
+import type { PoTokenRequest } from "../src/po-token/index.ts";
 
 let workersStarted = 0;
 class CountingWorker extends workerThreads.Worker {
@@ -19,6 +19,7 @@ globalThis.fakeBotGuard = {
   a(program, setup) {
     if (typeof document === "undefined" || location.origin !== "https://www.youtube.com") throw new Error("no DOM");
     if (window.yt?.config_?.EVENT_ID !== "home-event") throw new Error("no home page ytcfg");
+    document.createElement("canvas").getContext("2d");
     const text = (bytes) => new TextDecoder().decode(bytes);
     setup((done, [, , output]) => {
       output.push(async (integrity) => async (binding) => new TextEncoder().encode(text(integrity) + "|" + text(binding)));
@@ -83,10 +84,8 @@ afterEach(async () => {
 });
 
 const request = (overrides: Partial<PoTokenRequest> = {}): PoTokenRequest => ({
-  videoId: "aqz-KE-bpKQ",
+  contentBinding: "aqz-KE-bpKQ",
   client: "mweb",
-  visitorData: "visitor-data",
-  dataSyncId: undefined,
   signal: undefined,
   ...overrides,
 });
@@ -108,13 +107,30 @@ describe("createPoTokenProvider", () => {
     );
   });
 
-  test.each([
-    ["the video ID", request(), "aqz-KE-bpKQ"],
-    ["the Data Sync ID for a session token", request({ videoId: "", dataSyncId: "sync-id" }), "sync-id"],
-    ["the visitor data for a logged-out session token", request({ videoId: "" }), "visitor-data"],
-  ])("binds the token to %s", async (_, input, binding) => {
+  test("binds each token to its contentBinding", async () => {
     const provider = await provide(fakeYouTube({ ttl: 3600, threshold: 300 }));
-    expect(decode(await provider(input))).toBe(`it-1|${binding}`);
+    expect(decode(await provider(request()))).toBe("it-1|aqz-KE-bpKQ");
+    expect(decode(await provider(request({ contentBinding: "visitor-data" })))).toBe("it-1|visitor-data");
+  });
+
+  test("minting writes nothing to standard output or standard error", async () => {
+    const written: string[] = [];
+    const capture = (chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    };
+    const { stdout, stderr } = process;
+    const writes = [stdout.write, stderr.write];
+    stdout.write = capture as typeof stdout.write;
+    stderr.write = capture as typeof stderr.write;
+    try {
+      const provider = await provide(fakeYouTube({ ttl: 3600, threshold: 300 }));
+      await provider(request());
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      [stdout.write, stderr.write] = writes as [typeof stdout.write, typeof stderr.write];
+    }
+    expect(written).toEqual([]);
   });
 
   test.each([

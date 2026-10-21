@@ -36,10 +36,10 @@ Any function that returns a token works, for example one that calls a separate t
 
 ```ts
 const yt = new Ytdl({
-  getPoToken: async ({ videoId, visitorData, dataSyncId, client, signal }) => {
+  getPoToken: async ({ contentBinding, client, signal }) => {
     const response = await fetch("http://localhost:4416/token", {
       method: "POST",
-      body: JSON.stringify({ videoId, visitorData, dataSyncId, client }),
+      body: JSON.stringify({ contentBinding, client }),
       signal,
     });
     return response.text();
@@ -47,4 +47,4 @@ const yt = new Ytdl({
 });
 ```
 
-An empty `videoId` asks for a session token, bound to `dataSyncId` when signed in and to `visitorData` otherwise.
+`contentBinding` is what the token binds to: the video ID, both for a player request and for a SABR session that asks for attestation. The built-in provider mints and caches one token per `contentBinding`.

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Readable } from "node:stream";
-import { createNodeStream, createWebStream } from "../src/delivery/index.ts";
+import { deliver, Media } from "../src/delivery/index.ts";
 import { YtdlError } from "../src/errors.ts";
-import type { DeliveryInput, ResumeRequest } from "../src/delivery/index.ts";
-import type { DownloadOptions, ProgressEvent, RetryEvent, VideoFormat, VideoInfo } from "../src/types.ts";
+import type { Delivery, ReadOptions, ResumeRequest } from "../src/delivery/index.ts";
+import type { ProgressEvent, RetryEvent } from "../src/delivery/index.ts";
+import type { VideoFormat } from "../src/formats.ts";
+import type { VideoInfo } from "../src/info.ts";
 
 const SOURCE = pseudoRandomBytes(5500);
 
@@ -60,11 +62,18 @@ function info(overrides: Partial<VideoInfo> = {}): VideoInfo {
 
 interface Setup {
   readonly fetch: typeof fetch;
-  readonly options?: DownloadOptions;
+  readonly options?: ReadOptions;
   readonly info?: VideoInfo;
   readonly format?: VideoFormat;
   /** Replaces the default resume, which returns the next URL generation. */
-  readonly resume?: DeliveryInput["resume"];
+  readonly resume?: Delivery["resume"];
+}
+
+interface Input {
+  readonly delivery: Delivery;
+  readonly info: VideoInfo;
+  readonly format: VideoFormat;
+  readonly options: ReadOptions;
 }
 
 function setup({ fetch, options = {}, resume, ...rest }: Setup) {
@@ -72,11 +81,8 @@ function setup({ fetch, options = {}, resume, ...rest }: Setup) {
   const retries: RetryEvent[] = [];
   const progress: ProgressEvent[] = [];
   let generation = 1;
-  const input: DeliveryInput = {
-    info: rest.info ?? info(),
-    format: rest.format ?? format(1),
+  const delivery: Delivery = {
     fetch,
-    options: { ...options, onProgress: (event) => progress.push(event), onRetry: (event) => retries.push(event) },
     resume: async (request) => {
       resumes.push(request);
       if (resume) return resume(request);
@@ -84,23 +90,24 @@ function setup({ fetch, options = {}, resume, ...rest }: Setup) {
       return {
         info: info(),
         format: format(generation, {
-          isHLS: input.format.isHLS,
-          url: input.format.url?.replace(/gen=\d+/u, `gen=${generation}`),
+          isHLS: request.format.isHLS,
+          url: request.format.url?.replace(/gen=\d+/u, `gen=${generation}`),
         }),
       };
     },
-    sabr: () => undefined,
     mintPoToken: undefined,
+  };
+  const input: Input = {
+    delivery,
+    info: rest.info ?? info(),
+    format: rest.format ?? format(1),
+    options: { ...options, onProgress: (event) => progress.push(event), onRetry: (event) => retries.push(event) },
   };
   return { input, resumes, retries, progress };
 }
 
-function nodeStream(input: DeliveryInput): Readable {
-  return createNodeStream(async () => input, input.options);
-}
-
-function webStream(input: DeliveryInput): ReadableStream<Uint8Array> {
-  return createWebStream(async () => input, input.options);
+function nodeStream(input: Input): Readable {
+  return new Media(input.delivery, input.info, input.format).read(input.options);
 }
 
 async function collectNode(stream: Readable): Promise<{ data: Uint8Array; errors: unknown[] }> {
@@ -113,20 +120,6 @@ async function collectNode(stream: Readable): Promise<{ data: Uint8Array; errors
   return { data: new Uint8Array(Buffer.concat(parts)), errors };
 }
 
-async function collectWeb(stream: ReadableStream<Uint8Array>) {
-  const reader = stream.getReader();
-  const parts: Uint8Array[] = [];
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return { data: new Uint8Array(Buffer.concat(parts)), error: undefined, closed: reader.closed };
-      parts.push(value);
-    }
-  } catch (error) {
-    return { data: new Uint8Array(Buffer.concat(parts)), error, closed: reader.closed };
-  }
-}
-
 function forbidden(): Response {
   return new Response(null, { status: 403 });
 }
@@ -136,7 +129,7 @@ function serverError(): Response {
 }
 
 /** A ranged download whose window at byte `start` gets `answer`. */
-function failingAt(start: number, answer: () => Response, resume?: DeliveryInput["resume"]) {
+function failingAt(start: number, answer: () => Response, resume?: Delivery["resume"]) {
   const server = mediaServer(SOURCE, (request) => (request.start === start ? answer() : undefined));
   return setup({ fetch: server.fetch, options: { chunkSize: 1000 }, resume });
 }
@@ -203,47 +196,61 @@ describe("ranged delivery", () => {
     expect(error instanceof Error && error.cause instanceof YtdlError && error.cause.message).toContain("403");
   });
 
-  test("a resume that finds no format ends both stream types once with NO_FORMAT caused by the 403", async () => {
+  test("a resume that finds no format ends the stream once with NO_FORMAT caused by the 403", async () => {
     const noFormat = new YtdlError("NO_FORMAT", "No client offers itag 251");
-    const node = await collectNode(nodeStream(failingAt(1000, forbidden, () => Promise.reject(noFormat)).input));
-    const web = await collectWeb(webStream(failingAt(1000, forbidden, () => Promise.reject(noFormat)).input));
+    const { data, errors } = await collectNode(
+      nodeStream(failingAt(1000, forbidden, () => Promise.reject(noFormat)).input),
+    );
 
-    expect(node.errors).toHaveLength(1);
-    expect(node.data).toEqual(SOURCE.slice(0, 1000));
-    expect(web.data).toEqual(SOURCE.slice(0, 1000));
-    for (const error of [node.errors[0], web.error]) {
-      expect(YtdlError.is(error, "NO_FORMAT")).toBe(true);
-      expect(error instanceof Error && error.cause instanceof YtdlError && error.cause.message).toContain("403");
-    }
-    await expect(web.closed).rejects.toBe(web.error);
+    expect(data).toEqual(SOURCE.slice(0, 1000));
+    expect(errors).toHaveLength(1);
+    const [error] = errors;
+    expect(YtdlError.is(error, "NO_FORMAT")).toBe(true);
+    expect(error instanceof Error && error.cause instanceof YtdlError && error.cause.message).toContain("403");
   });
 
   test("other statuses fail once with REQUEST_FAILED naming the itag and status, never the signature", async () => {
-    const nodeSetup = failingAt(1000, serverError);
-    const webSetup = failingAt(1000, serverError);
+    const { input, resumes } = failingAt(1000, serverError);
 
-    const node = await collectNode(nodeStream(nodeSetup.input));
-    const web = await collectWeb(webStream(webSetup.input));
+    const { errors } = await collectNode(nodeStream(input));
 
-    expect(node.errors).toHaveLength(1);
-    for (const error of [node.errors[0], web.error]) {
-      expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
-      const message = error instanceof Error ? error.message : "";
-      expect(message).toContain("251");
-      expect(message).toContain("500");
-      expect(message).not.toContain("SECRETSIG");
-    }
-    expect(nodeSetup.resumes).toEqual([]);
-    expect(webSetup.resumes).toEqual([]);
+    expect(errors).toHaveLength(1);
+    const [error] = errors;
+    expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
+    const message = error instanceof Error ? error.message : "";
+    expect(message).toContain("251");
+    expect(message).toContain("500");
+    expect(message).not.toContain("SECRETSIG");
+    expect(resumes).toEqual([]);
   });
 
   test("a failed lookup is the stream's one error", async () => {
     const lookup = new YtdlError("PRIVATE", "Private video");
-    const node = await collectNode(createNodeStream(() => Promise.reject(lookup)));
-    const web = await collectWeb(createWebStream(() => Promise.reject(lookup)));
+    const { input } = setup({ fetch: mediaServer(SOURCE).fetch });
 
-    expect(node.errors).toEqual([lookup]);
-    expect(web.error).toBe(lookup);
+    const { errors } = await collectNode(deliver(input.delivery, () => Promise.reject(lookup)));
+
+    expect(errors).toEqual([lookup]);
+  });
+
+  test("a later range read uses the refreshed URL and resolves nothing again", async () => {
+    const server = mediaServer(SOURCE, ({ generation, start }) =>
+      generation === 1 && start === 1000 ? forbidden() : undefined,
+    );
+    const { input, resumes } = setup({ fetch: server.fetch });
+    const media = new Media(input.delivery, input.info, input.format);
+
+    expect(await collectNode(media.read({ range: { start: 0, end: 1999 }, chunkSize: 1000 }))).toEqual({
+      data: SOURCE.slice(0, 2000),
+      errors: [],
+    });
+    const before = server.requests.length;
+    const second = await collectNode(media.read({ range: { start: 3000, end: 3999 } }));
+
+    expect(second.data).toEqual(SOURCE.slice(3000, 4000));
+    expect(server.requests[before]?.generation).toBe(2);
+    expect(media.format.client).toBe("tv");
+    expect(resumes).toHaveLength(1);
   });
 
   test("an expired URL is replaced before the first media request", async () => {
@@ -333,39 +340,25 @@ describe("ranged delivery", () => {
     expect(errors[0] instanceof Error && errors[0].name).toBe("AbortError");
   });
 
-  test("cancelling a web stream aborts the in-flight request and requests nothing more", async () => {
+  test("aborting the caller's signal after the first chunk aborts the in-flight request and requests nothing more", async () => {
     const second = Promise.withResolvers<void>();
     const server = mediaServer(SOURCE, ({ start, signal }) => {
       if (start !== 1000) return undefined;
       second.resolve();
       return new Promise<Response>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
     });
-    const { input } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
-    const reader = webStream(input).getReader();
-
-    expect((await reader.read()).value).toEqual(SOURCE.slice(0, 1000));
-    // The default high-water mark of 0 pulls only on a read, so the second request needs one.
-    const pending = reader.read();
+    const caller = new AbortController();
+    const { input } = setup({ fetch: server.fetch, options: { chunkSize: 1000, signal: caller.signal } });
+    const collected = collectNode(nodeStream(input));
     await second.promise;
-    await reader.cancel();
-    await pending;
+    caller.abort();
+    const { data, errors } = await collected;
     await Bun.sleep(30);
 
+    expect(data).toEqual(SOURCE.slice(0, 1000));
+    expect(errors).toHaveLength(1);
     expect(server.requests[1]?.signal.aborted).toBe(true);
     expect(server.requests).toHaveLength(2);
-  });
-
-  test("a web stream looks up and requests nothing before the first read", async () => {
-    const server = mediaServer(SOURCE);
-    let prepared = 0;
-    const { input } = setup({ fetch: server.fetch });
-    const stream = createWebStream(async () => {
-      prepared++;
-      return input;
-    });
-    await Bun.sleep(30);
-    expect([prepared, server.requests.length]).toEqual([0, 0]);
-    await stream.cancel();
   });
 
   test("destroying during a resume aborts it and no media request follows", async () => {

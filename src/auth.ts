@@ -1,11 +1,11 @@
 // Header format follows yt-dlp `_base.py` `_generate_cookie_auth_headers`.
 import { createHash } from "node:crypto";
 import { userAgentHeader, YOUTUBE_ORIGIN } from "./clients.ts";
-import { YtdlError, registerSecret } from "./errors.ts";
+import { registerSecret, YtdlError } from "./errors.ts";
 import { abortable, fetchText } from "./http.ts";
 import { str, ytcfg } from "./json.ts";
 
-export function parseCookieHeader(header: string): Map<string, string> {
+function parseCookieHeader(header: string): Map<string, string> {
   const cookies = new Map<string, string>();
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");
@@ -15,8 +15,23 @@ export function parseCookieHeader(header: string): Map<string, string> {
   return cookies;
 }
 
+// curl marks HttpOnly cookies with a `#HttpOnly_` prefix.
+function netscapeToCookieHeader(text: string): string {
+  const cookies = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/u)) {
+    const line = raw.startsWith("#HttpOnly_") ? raw.slice("#HttpOnly_".length) : raw;
+    if (line.startsWith("#") || line.trim() === "") continue;
+    const [domain, , , , , name, value] = line.split("\t");
+    if (domain === undefined || !name || value === undefined) continue;
+    const host = domain.replace(/^\./u, "");
+    if (host !== "youtube.com" && !host.endsWith(".youtube.com")) continue;
+    cookies.set(name, value);
+  }
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
 /** YouTube itself falls back to `__Secure-3PAPISID` when `SAPISID` is missing (yt-dlp#393). */
-export function sapisidOf(cookies: ReadonlyMap<string, string>): string | undefined {
+function sapisidOf(cookies: ReadonlyMap<string, string>): string | undefined {
   return cookies.get("SAPISID") || cookies.get("__Secure-3PAPISID") || undefined;
 }
 
@@ -39,19 +54,23 @@ export class CookieAuth {
   #session: Promise<Session> | undefined;
 
   constructor(options: CookieAuthOptions) {
-    if (typeof options.cookie !== "string" || !sapisidOf(parseCookieHeader(options.cookie))) {
+    const header =
+      typeof options.cookie !== "string" || !/[\t\n]/u.test(options.cookie)
+        ? options.cookie
+        : netscapeToCookieHeader(options.cookie);
+    if (typeof header !== "string" || !sapisidOf(parseCookieHeader(header))) {
       throw new YtdlError("INVALID_ARGUMENT", "The cookie has no SAPISID or __Secure-3PAPISID value; it is signed out");
     }
-    const cookies = parseCookieHeader(options.cookie);
-    this.#cookie = options.cookie;
+    const cookies = parseCookieHeader(header);
+    registerSecret(header);
+    for (const value of cookies.values()) registerSecret(value);
+    this.#cookie = header;
     this.#sids = [
       ["SAPISIDHASH", sapisidOf(cookies)],
       ["SAPISID1PHASH", cookies.get("__Secure-1PAPISID")],
       ["SAPISID3PHASH", cookies.get("__Secure-3PAPISID")],
     ];
     this.#fetch = options.fetch;
-    registerSecret(options.cookie);
-    for (const value of cookies.values()) registerSecret(value);
   }
 
   async headers(origin: string, signal?: AbortSignal): Promise<Readonly<Record<string, string>>> {
@@ -106,11 +125,11 @@ export class CookieAuth {
     }
     const field = (name: string) => str(config[name]) || undefined;
     const dataSyncId = field("DATASYNC_ID");
+    if (dataSyncId) registerSecret(dataSyncId);
     // `DELEGATED||USER` on a secondary channel, `USER||` on the primary one.
     const [first, second] = (dataSyncId ?? "").split("||");
     const delegatedSessionId = field("DELEGATED_SESSION_ID") ?? (second ? first : undefined);
     const userSessionId = field("USER_SESSION_ID") ?? (second || first || undefined);
-    if (dataSyncId) registerSecret(dataSyncId);
     return {
       dataSyncId,
       userSessionId,

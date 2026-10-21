@@ -25,9 +25,6 @@
     "type": "git",
     "url": "git+https://github.com/distubejs/ytdl-core.git"
   },
-  "bin": {
-    "ytdl-core": "./dist/cli.js"
-  },
   "files": [
     "dist",
     "LICENSE"

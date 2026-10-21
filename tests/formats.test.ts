@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseFormats } from "../src/formats.ts";
-import { chooseFormat, Filter, Quality, YtdlError } from "../src/index.ts";
+import { chooseFormat, Quality, YtdlError } from "../src/index.ts";
 import type { ChooseFormatOptions, FormatCriteria, VideoFormat } from "../src/index.ts";
 import { fixture } from "./fake-youtube.ts";
 
@@ -71,14 +71,14 @@ describe("format metadata", () => {
 
 describe("chooseFormat", () => {
   test("highest audio with audioonly takes the best audio-only original", () => {
-    const chosen = chooseFormat(formats, { quality: "highestaudio", filter: "audioonly" });
+    const chosen = chooseFormat(formats, { quality: "highestaudio", filter: { hasAudio: true, hasVideo: false } });
     expect(audioOnly).toContain(chosen);
     expect(chosen.isDrc).toBe(false);
     expect(chosen.audioBitrate).toBe(most(audioOnly, (format) => format.audioBitrate ?? 0));
   });
 
   test("highest audio prefers less video among equal audio", () => {
-    const best = chooseFormat(formats, { quality: "highestaudio", filter: "audioonly" });
+    const best = chooseFormat(formats, { quality: "highestaudio", filter: { hasAudio: true, hasVideo: false } });
     const tied = {
       ...muxed,
       audioBitrate: best.audioBitrate,
@@ -102,7 +102,7 @@ describe("chooseFormat", () => {
         (format) => format.bitrate ?? 0,
       ),
     );
-    const lowest = chooseFormat(formats, { quality: "lowestvideo", filter: "videoonly" });
+    const lowest = chooseFormat(formats, { quality: "lowestvideo", filter: { hasAudio: false, hasVideo: true } });
     expect(lowest.height).toBe(Math.min(...videoOnly.map((format) => format.height ?? 0)));
   });
 
@@ -114,7 +114,9 @@ describe("chooseFormat", () => {
 
   test("an explicit format wins over quality and filter", () => {
     const wanted = audioOnly[0]!;
-    expect(chooseFormat(formats, { format: wanted, quality: "highestvideo", filter: "videoonly" })).toBe(wanted);
+    expect(
+      chooseFormat(formats, { format: wanted, quality: "highestvideo", filter: { hasAudio: false, hasVideo: true } }),
+    ).toBe(wanted);
   });
 
   test("nothing matching throws NO_FORMAT", () => {
@@ -155,14 +157,14 @@ describe("filters", () => {
   const aac = audio(140, "mp4", "mp4a.40.2", 160);
 
   test.each([
-    [Filter.AudioAndVideo, { hasAudio: true, hasVideo: true }, undefined],
-    [Filter.Video, { hasVideo: true }, undefined],
-    [Filter.VideoOnly, { hasAudio: false, hasVideo: true }, "NO_FORMAT"],
-    [Filter.Audio, { hasAudio: true }, undefined],
-    [Filter.AudioOnly, { hasAudio: true, hasVideo: false }, "NO_FORMAT"],
-  ])("%s keeps only formats with its media kinds", (filter, kinds, onlyMuxed) => {
+    [{ hasAudio: true, hasVideo: true }, undefined],
+    [{ hasVideo: true }, undefined],
+    [{ hasAudio: false, hasVideo: true }, "NO_FORMAT"],
+    [{ hasAudio: true }, undefined],
+    [{ hasAudio: true, hasVideo: false }, "NO_FORMAT"],
+  ])("%o keeps only formats with its media kinds", (filter, onlyMuxed) => {
     for (const quality of [Quality.Highest, Quality.Lowest]) {
-      expect(chooseFormat(formats, { filter, quality })).toMatchObject(kinds);
+      expect(chooseFormat(formats, { filter, quality })).toMatchObject(filter);
     }
     expect(errorCode({ filter }, [muxed])).toBe(onlyMuxed);
   });
@@ -179,7 +181,7 @@ describe("filters", () => {
   });
 
   test("a list picks with its first entry that yields a format", () => {
-    const opusFirst = [{ hasVideo: false, audioCodec: "opus" }, { hasVideo: false }, Filter.Audio];
+    const opusFirst = [{ hasVideo: false, audioCodec: "opus" }, { hasVideo: false }, { hasAudio: true }];
     const quality = Quality.HighestAudio;
     expect(chooseFormat([aac, opus, muxed], { filter: opusFirst, quality })).toBe(opus);
     expect(chooseFormat([aac, muxed], { filter: opusFirst, quality })).toBe(aac);
@@ -187,13 +189,15 @@ describe("filters", () => {
   });
 
   test("a list where no entry matches throws NO_FORMAT", () => {
-    expect(errorCode({ filter: [Filter.AudioOnly, { hasVideo: false }] }, [muxed])).toBe("NO_FORMAT");
+    expect(errorCode({ filter: [{ hasAudio: true, hasVideo: false }, (format) => !format.hasVideo] }, [muxed])).toBe(
+      "NO_FORMAT",
+    );
   });
 
   test.each([
     ["an unknown criterion", { bitrate: 128 }],
     ["a criterion of the wrong type", { hasVideo: "no" }],
-    ["an unknown name", "audio-only"],
+    ["a 4.x filter string", "audioonly"],
     ["an empty list", []],
   ])("%s throws INVALID_ARGUMENT", (_, filter) => {
     expect(errorCode({ filter: filter as FormatCriteria })).toBe("INVALID_ARGUMENT");

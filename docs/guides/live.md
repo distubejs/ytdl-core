@@ -15,7 +15,7 @@ const live = await yt.getInfo(liveUrl);
 
 live.videoDetails.isLive; // true
 yt.download(live, { filter: (format) => format.isHLS });
-yt.download(live, { quality: Quality.HighestAudio, filter: (format) => format.isLive && !format.isHLS });
+yt.download(live, { quality: Quality.HighestAudio, filter: { isLive: true, hasAudio: true, hasVideo: false } });
 ```
 
 Both start `liveBuffer` milliseconds behind the live edge, 20 seconds by default, and end when the broadcast does:
