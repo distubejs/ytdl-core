@@ -182,8 +182,8 @@ function continuation(lists: readonly (readonly unknown[])[]): string | undefine
     .find((token) => token !== undefined);
 }
 
-// 5000 playlist entries at 100 a page is 50 pages; raise this if YouTube lifts that cap.
-const MAX_PAGES = 60;
+// Caps a playlist at 100 000 entries, 100 a page; raise it if a real list is longer.
+const MAX_PAGES = 1000;
 
 interface Paging {
   readonly first: Json;

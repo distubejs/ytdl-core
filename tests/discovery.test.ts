@@ -93,6 +93,19 @@ function pages(...answers: readonly Page[]): () => Response {
   };
 }
 
+function numberedPages(last: number): () => Response {
+  let served = 0;
+  return () => {
+    served++;
+    const next = served < last ? [continuationItem(`PAGE-${served + 1}`)] : [];
+    return Response.json(
+      appendedPage([playlistEntry(`video-${served}`), ...next], {
+        metadata: { playlistMetadataRenderer: { title: "Numbered" } },
+      }),
+    );
+  };
+}
+
 function setup(routes: Record<string, () => Response>, options: { readonly cookie?: string } = {}) {
   const yt = fakeYouTube({ player: () => playable(VIDEO_ID), next: NEXT, routes });
   const bodies = (url: string) =>
@@ -303,21 +316,19 @@ describe("getPlaylist", () => {
     expect(bodies(BROWSE)).toHaveLength(1);
   });
 
-  test("a playlist that keeps offering new pages rejects REQUEST_FAILED at the page cap", async () => {
-    let served = 0;
-    const endless = () => {
-      served++;
-      const next = served < 100 ? [continuationItem(`PAGE-${served + 1}`)] : [];
-      return Response.json(
-        appendedPage([playlistEntry(`video-${served}`), ...next], {
-          metadata: { playlistMetadataRenderer: { title: "Endless" } },
-        }),
-      );
-    };
-    const { ytdl, bodies } = setup({ [BROWSE]: endless });
+  test("a playlist that ends on its 70th page resolves with every entry", async () => {
+    const { ytdl } = setup({ [BROWSE]: numberedPages(70) });
+
+    const playlist = await ytdl.getPlaylist(PLAYLIST_ID);
+
+    expect(playlist.videos.map((video) => video.id)).toEqual(Array.from({ length: 70 }, (_, i) => `video-${i + 1}`));
+  });
+
+  test("a playlist that keeps offering new pages rejects REQUEST_FAILED after 1000 pages", async () => {
+    const { ytdl, bodies } = setup({ [BROWSE]: numberedPages(Number.POSITIVE_INFINITY) });
 
     expect((await rejection(ytdl.getPlaylist(PLAYLIST_ID))).code).toBe("REQUEST_FAILED");
-    expect(bodies(BROWSE)).toHaveLength(60);
+    expect(bodies(BROWSE)).toHaveLength(1000);
   });
 
   test("a continuation that repeats the one that fetched it ends expansion", async () => {
