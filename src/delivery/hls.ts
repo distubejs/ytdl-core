@@ -3,7 +3,7 @@ import { AUDIO_CODEC, MUXED_AUDIO_KBPS } from "../formats.ts";
 import { num } from "../json.ts";
 import type { VideoFormat } from "../formats.ts";
 import { YtdlError } from "../errors.ts";
-import { readBody, waitUntil, type Session } from "./session.ts";
+import { waitUntil, type Session } from "./session.ts";
 
 export function parseHlsMaster(playlist: string, base: string, client: Client): VideoFormat[] {
   const lines = playlist.split(/\r?\n/u);
@@ -108,7 +108,9 @@ export async function* readLive(
     const url = session.format.url ?? "";
     const response = await session.request(url);
     if (!response) continue;
-    const playlist = parsePlaylist(await response.text(), url);
+    const text = await session.read(response, (body) => body.text());
+    if (text === undefined) continue;
+    const playlist = parsePlaylist(text, url);
     next ??= startSequence(playlist, liveBuffer);
     let fresh = false;
     for (const segment of playlist.segments) {
@@ -116,9 +118,11 @@ export async function* readLive(
       const media = await session.request(segment.uri);
       // A resumed playlist's segment URLs replace the old, expired ones.
       if (!media) continue poll;
-      for await (const piece of readBody(media, session.format.itag)) {
-        session.progress(piece.length, undefined);
-        yield piece;
+      const bytes = await session.read(media, (body) => body.bytes());
+      if (!bytes) continue poll;
+      if (bytes.length > 0) {
+        session.progress(bytes.length, undefined);
+        yield bytes;
       }
       next = segment.sequence + 1;
       fresh = true;

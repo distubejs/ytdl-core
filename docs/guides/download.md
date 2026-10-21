@@ -92,6 +92,8 @@ controller.abort();
 
 YouTube cuts media URLs off, often about a minute in, and they expire after a few hours. The stream doesn't end when that happens. It looks the format up again and continues from the byte it stopped at, calling `onRetry` each time. After three resumes in a row without a byte, it fails with `REQUEST_FAILED`.
 
+A request that fails, or a response that breaks off or sends nothing for `timeoutMs` (a `new Ytdl` option, default 30 seconds), resumes the same way. A lookup that gets no answer within `timeoutMs` fails with `REQUEST_FAILED`. Live DASH holds each request for up to about 8 seconds while it waits for the next segment, so keep `timeoutMs` above that for live videos.
+
 ## All options
 
 See [`DownloadOptions`](../../api/interfaces/downloadoptions/) and [`ReadOptions`](../../api/interfaces/readoptions/), including `chunkSize` and `highWaterMark` for tuning.

@@ -1,6 +1,6 @@
 import { ignore } from "../http.ts";
 import { YtdlError } from "../errors.ts";
-import { readBody, type Session, waitUntil } from "./session.ts";
+import { type Session, waitUntil } from "./session.ts";
 
 const DEFAULT_SEGMENT_MS = 5000;
 const IDLE_POLLS_BEFORE_END = 3;
@@ -50,9 +50,11 @@ export async function* readDashLive(
       await waitUntil(Date.now() + head.segmentMs, signal);
       continue;
     }
-    for await (const piece of readBody(response, itag)) {
-      session.progress(piece.length, undefined);
-      yield piece;
+    const bytes = await session.read(response, (body) => body.bytes());
+    if (!bytes) continue;
+    if (bytes.length > 0) {
+      session.progress(bytes.length, undefined);
+      yield bytes;
     }
     next++;
   }

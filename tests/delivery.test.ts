@@ -128,6 +128,23 @@ function serverError(): Response {
   return new Response(null, { status: 500 });
 }
 
+/** Sends `bytes`, then fails the body like a reset connection. */
+function brokenAfter(bytes: Uint8Array, init?: ResponseInit): Response {
+  return new Response(
+    new ReadableStream({
+      start: (controller) => {
+        if (bytes.length > 0) controller.enqueue(bytes);
+      },
+      pull: (controller) => controller.error(new TypeError("socket reset")),
+    }),
+    init,
+  );
+}
+
+function resetConnection(): never {
+  throw new TypeError("connection reset");
+}
+
 /** A ranged download whose window at byte `start` gets `answer`. */
 function failingAt(start: number, answer: () => Response, resume?: Delivery["resume"]) {
   const server = mediaServer(SOURCE, (request) => (request.start === start ? answer() : undefined));
@@ -182,8 +199,41 @@ describe("ranged delivery", () => {
     expect(server.requests.find((request) => request.generation === 2)?.start).toBe(1500);
   });
 
-  test("gives up after three resumes without progress, keeping the last 403", async () => {
-    const server = mediaServer(SOURCE, ({ start }) => (start >= 1000 ? forbidden() : undefined));
+  test("resumes a body that breaks off mid-window from the next unreceived byte", async () => {
+    const server = mediaServer(SOURCE, ({ generation, start }) =>
+      generation === 1 && start === 1000 ? brokenAfter(SOURCE.slice(1000, 1500)) : undefined,
+    );
+    const { input, retries } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "response broke off" }]);
+    expect(server.requests.find((request) => request.generation === 2)?.start).toBe(1500);
+  });
+
+  test("resumes a request that fails before its headers at the same byte", async () => {
+    const server = mediaServer(SOURCE, ({ generation, start }) => {
+      if (generation === 1 && start === 1000) resetConnection();
+      return undefined;
+    });
+    const { input, retries } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "request failed" }]);
+    expect(server.requests.find((request) => request.generation === 2)?.start).toBe(1000);
+  });
+
+  test.each([
+    ["403", forbidden, "403"],
+    ["broken body", () => brokenAfter(new Uint8Array()), "broke off"],
+    ["failed request", resetConnection, "request failed"],
+  ])("gives up after three resumes without progress, keeping the last %s", async (_, answer, cause) => {
+    const server = mediaServer(SOURCE, ({ start }) => (start >= 1000 ? answer() : undefined));
     const { input, retries } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
 
     const { data, errors } = await collectNode(nodeStream(input));
@@ -193,7 +243,57 @@ describe("ranged delivery", () => {
     expect(errors).toHaveLength(1);
     const [error] = errors;
     expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
-    expect(error instanceof Error && error.cause instanceof YtdlError && error.cause.message).toContain("403");
+    expect(error instanceof Error && error.cause instanceof YtdlError && error.cause.message).toContain(cause);
+  });
+
+  test("destroying mid-body neither retries nor requests again", async () => {
+    const waiting = Promise.withResolvers<void>();
+    const server = mediaServer(SOURCE, ({ start, signal }) => {
+      if (start !== 1000) return undefined;
+      let pulls = 0;
+      return new Response(
+        new ReadableStream(
+          {
+            start: (controller) => signal.addEventListener("abort", () => controller.error(signal.reason)),
+            pull: (controller) => {
+              if (++pulls === 1) controller.enqueue(SOURCE.slice(1000, 1500));
+              else waiting.resolve();
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+      );
+    });
+    const { input, retries } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+    const stream = nodeStream(input);
+    const collected = collectNode(stream);
+    await waiting.promise;
+    stream.destroy();
+    const { data } = await collected;
+    await Bun.sleep(30);
+
+    expect(data).toEqual(SOURCE.slice(0, 1500));
+    expect(retries).toEqual([]);
+    expect(server.requests).toHaveLength(2);
+  });
+
+  test("a format of unknown length continues after a short window until the range past its end answers 400", async () => {
+    const server = mediaServer(SOURCE, ({ generation, start }) => {
+      if (start >= SOURCE.length) return new Response(null, { status: 400 });
+      if (generation === 1 && start === 1000) return new Response(SOURCE.slice(1000, 1500));
+      return undefined;
+    });
+    const { input, progress } = setup({
+      fetch: server.fetch,
+      format: format(1, { contentLength: undefined }),
+      options: { chunkSize: 1000 },
+    });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(progress.at(-1)).toMatchObject({ downloaded: SOURCE.length, total: undefined });
   });
 
   test("a resume that finds no format ends the stream once with NO_FORMAT caused by the 403", async () => {
@@ -387,6 +487,34 @@ describe("ranged delivery", () => {
 });
 
 describe("live delivery", () => {
+  test.each([
+    ["playlist", (url: URL) => url.pathname.endsWith(".m3u8"), "#EXTM3U\n"],
+    ["segment", (url: URL) => url.pathname.endsWith("/seg/14.ts"), "1"],
+  ])("a %s body that breaks off resumes without a gap or a repeat", async (_, breaks, partial) => {
+    const playlists = [playlist(10, 15), playlist(13, 18), playlist(16, 19, true)];
+    let polls = 0;
+    let broke = false;
+    const server = mediaServer(new Uint8Array(), ({ url }) => {
+      if (!broke && breaks(url)) {
+        broke = true;
+        return brokenAfter(new TextEncoder().encode(partial));
+      }
+      if (url.pathname.endsWith(".m3u8")) return new Response(playlists[Math.min(polls++, playlists.length - 1)]);
+      return new Response(`${/\/seg\/(\d+)\.ts$/u.exec(url.pathname)?.[1]},`);
+    });
+    const { input, retries } = setup({
+      fetch: server.fetch,
+      format: format(1, { isHLS: true, contentLength: undefined, url: "https://media.test/live/index.m3u8?gen=1" }),
+      options: { liveBuffer: 3000 },
+    });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("13,14,15,16,17,18,19,");
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "response broke off" }]);
+  });
+
   test("overlapping playlist refreshes emit each segment once, in order, until ENDLIST", async () => {
     const playlists = [playlist(10, 15), playlist(13, 18), playlist(16, 19, true)];
     let polls = 0;
@@ -448,10 +576,17 @@ describe("live DASH delivery", () => {
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
   });
 
-  test("a 403 resumes on a new URL without a gap or a repeat", async () => {
-    let refused = false;
+  test.each([
+    ["a 403", forbidden],
+    [
+      "a body that breaks off",
+      () =>
+        brokenAfter(new TextEncoder().encode("1"), { headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } }),
+    ],
+  ])("%s resumes on a new URL without a gap or a repeat", async (_, failure) => {
+    let failed = false;
     const { server } = dashOrigin({
-      answer: (sq) => (sq === 19 && !refused ? ((refused = true), forbidden()) : undefined),
+      answer: (sq) => (sq === 19 && !failed ? ((failed = true), failure()) : undefined),
     });
     const { input, resumes } = dashSetup(server.fetch);
     const { data, errors } = await collectNode(nodeStream(input));

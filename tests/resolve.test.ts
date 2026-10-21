@@ -465,6 +465,29 @@ describe("timeouts", () => {
     expect(causes(error).some((cause) => cause instanceof DOMException && cause.name === "TimeoutError")).toBe(true);
   });
 
+  test("a media body that never sends a byte errors once after three resumes with a TimeoutError cause", async () => {
+    const yt = fakeYouTube({
+      player: () =>
+        playable(ID, [audioFormat(251, { url: `${MEDIA_HOST}?itag=251&expire=4102444800`, contentLength: "3000" })]),
+      media: () => new Response(new ReadableStream()),
+    });
+    const retries: RetryEvent[] = [];
+    const stream = new Ytdl({ fetch: yt.fetch, timeoutMs: 50 }).download(ID, {
+      onRetry: (event) => retries.push(event),
+    });
+    const errors: unknown[] = [];
+    stream.on("error", (error) => errors.push(error));
+    stream.resume();
+    await new Promise((resolve) => stream.once("close", resolve));
+
+    expect(retries.map((retry) => retry.attempt)).toEqual([1, 2, 3]);
+    expect(errors).toHaveLength(1);
+    expect(YtdlError.is(errors[0], "REQUEST_FAILED")).toBe(true);
+    expect(causes(errors[0]).some((cause) => cause instanceof DOMException && cause.name === "TimeoutError")).toBe(
+      true,
+    );
+  });
+
   test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "timeoutMs %p throws INVALID_ARGUMENT before any request",
     (timeoutMs) => {

@@ -32,7 +32,7 @@ export interface ReadOptions extends LookupOptions {
   readonly liveBuffer?: number;
   /** Called after each chunk with the bytes received so far and the total, when known. */
   readonly onProgress?: (event: ProgressEvent) => void;
-  /** Called before each re-resolution after a 403, an expired URL or a failed SABR session. */
+  /** Called before each re-resolution after a 403, a failed or stalled request or body, an expired URL or a failed SABR session. */
   readonly onRetry?: (event: RetryEvent) => void;
 }
 
@@ -195,20 +195,31 @@ async function* readRanged(
     const windowEnd = Math.min(position + chunkSize - 1, last);
     const url = session.format.url;
     if (url === undefined) return;
-    const response = await session.request(`${url}${url.includes("?") ? "&" : "?"}range=${position}-${windowEnd}`);
+    // YouTube answers a range that starts past the last byte with HTTP 400.
+    const response = await session.request(`${url}${url.includes("?") ? "&" : "?"}range=${position}-${windowEnd}`, {
+      allowBadRequest: last === Infinity && session.downloaded > 0,
+    });
     if (!response) continue;
+    if (response.status === 400) {
+      response.body?.cancel().catch(ignore);
+      return;
+    }
     const windowStart = position;
-    for await (const piece of readBody(response, itag)) {
-      // A server may answer past the requested range.
-      const bytes = piece.subarray(0, windowEnd - position + 1);
-      if (bytes.length === 0) break;
-      position += bytes.length;
-      session.progress(bytes.length, total);
-      yield bytes;
+    try {
+      for await (const piece of readBody(response, itag)) {
+        // A server may answer past the requested range.
+        const bytes = piece.subarray(0, windowEnd - position + 1);
+        if (bytes.length === 0) break;
+        position += bytes.length;
+        session.progress(bytes.length, total);
+        yield bytes;
+      }
+    } catch (error) {
+      if (!YtdlError.is(error, "REQUEST_FAILED")) throw error;
+      await session.resume("response broke off", error);
+      continue;
     }
     if (position > windowEnd) continue;
-    // YouTube ends a format of unknown length with a short window.
-    if (last === Infinity) return;
     if (position === windowStart) {
       throw new YtdlError("REQUEST_FAILED", `itag ${itag}: empty media response at byte ${position}`);
     }

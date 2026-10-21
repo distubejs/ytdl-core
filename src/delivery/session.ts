@@ -48,18 +48,36 @@ export class Session {
     return false;
   }
 
-  async request(url: string, { allowNotFound = false } = {}): Promise<Response | undefined> {
+  async request(url: string, { allowNotFound = false, allowBadRequest = false } = {}): Promise<Response | undefined> {
     if (!(await this.ensureFresh())) return undefined;
     const { itag } = this.format;
     const what = `itag ${itag}: media`;
     // YouTube requires the client that signed the URL to fetch it.
     const init = { headers: userAgentHeader(this.format.client), signal: this.#signal };
-    const response = await send(this.delivery.fetch, url, init, what);
-    if (allowNotFound && response.status === 404) return response;
+    let response: Response;
+    try {
+      response = await send(this.delivery.fetch, url, init, what);
+    } catch (error) {
+      if (!YtdlError.is(error, "REQUEST_FAILED")) throw error;
+      await this.resume("request failed", error);
+      return undefined;
+    }
+    if ((allowNotFound && response.status === 404) || (allowBadRequest && response.status === 400)) return response;
     if (response.status !== 403) return expectOk(response, what);
     response.body?.cancel().catch(ignore);
     await this.resume("HTTP 403", new YtdlError("REQUEST_FAILED", `${what} answered HTTP 403`));
     return undefined;
+  }
+
+  /** Reads a whole body; one that breaks off or stalls resumes and gives `undefined`. */
+  async read<T>(response: Response, parse: (body: Response) => Promise<T>): Promise<T | undefined> {
+    try {
+      return await parse(response);
+    } catch (cause) {
+      const what = `itag ${this.format.itag}: media response broke off`;
+      await this.resume("response broke off", new YtdlError("REQUEST_FAILED", what, { cause }));
+      return undefined;
+    }
   }
 
   progress(bytes: number, total: number | undefined): void {
@@ -69,6 +87,7 @@ export class Session {
   }
 
   async resume(reason: string, cause: YtdlError): Promise<void> {
+    this.#signal.throwIfAborted();
     const { itag, client } = this.format;
     const attempt = ++this.#attempt;
     if (attempt > MAX_RESUMES_WITHOUT_PROGRESS) {
