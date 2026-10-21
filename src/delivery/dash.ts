@@ -39,9 +39,10 @@ export async function* readDashLive(
       next = Math.max(0, head.sequence - Math.ceil(liveBuffer / head.segmentMs));
       continue;
     }
-    if (response.status === 404) {
+    // YouTube answers 204 when the next segment does not arrive within its long-poll window.
+    if (response.status === 404 || response.status === 204) {
       response.body?.cancel().catch(ignore);
-      if (next <= head.sequence) {
+      if (next < head.sequence) {
         next = head.sequence;
         continue;
       }

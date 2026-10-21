@@ -462,6 +462,21 @@ describe("live DASH delivery", () => {
     expect(server.requests.filter((request) => request.url.searchParams.get("sq") === "20")[0]?.generation).toBe(2);
   });
 
+  test("a 204 past the head counts as an idle poll and skips no segment", async () => {
+    const { server } = dashOrigin({ last: 21 });
+    let empty = 0;
+    const holding = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(input)).searchParams.get("sq") === "21" && empty++ < 2) {
+        return new Response(null, { status: 204, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } });
+      }
+      return server.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    const { data, errors } = await collectNode(nodeStream(dashSetup(holding).input));
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,");
+  });
+
   test("a segment that left the DVR window jumps to the head", async () => {
     let served = 0;
     const { state, server } = dashOrigin({
@@ -480,6 +495,32 @@ describe("live DASH delivery", () => {
       ({ url }) => Number(url.searchParams.get("sq")) > 20 && Number(url.searchParams.get("sq")) < 40,
     );
     expect(skipped).toEqual([]);
+  });
+
+  test("a 404 at the head counts as an idle poll and ends the stream", async () => {
+    const { server } = dashOrigin({
+      last: 20,
+      answer: (sq) =>
+        sq === 20
+          ? new Response(null, { status: 404, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } })
+          : undefined,
+    });
+    const slow = (async (input: string | URL | Request, init?: RequestInit) => {
+      await Bun.sleep(1);
+      return server.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    const stream = nodeStream(dashSetup(slow).input);
+    const collected = collectNode(stream);
+    const ended = await Promise.race([collected.then(() => true), Bun.sleep(1000).then(() => false)]);
+    if (!ended) stream.destroy();
+    const { data, errors } = await collected;
+
+    expect(ended).toBe(true);
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("17,18,19,");
+    expect(server.requests.filter((request) => request.url.searchParams.get("sq") === "20").length).toBeLessThanOrEqual(
+      4,
+    );
   });
 
   test("destroying while waiting for the next segment requests nothing more", async () => {
