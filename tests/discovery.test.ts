@@ -246,6 +246,7 @@ describe("discovery arguments", () => {
     `https://www.youtube.com/watch?v=${VIDEO_ID}`,
     `https://example.com/playlist?list=${PLAYLIST_ID}`,
     VIDEO_ID,
+    `RD${VIDEO_ID}`,
   ])("getPlaylist(%s) rejects INVALID_URL before any request", async (input) => {
     const { yt, ytdl } = setup({});
     expect((await rejection(ytdl.getPlaylist(input))).code).toBe("INVALID_URL");
@@ -274,6 +275,16 @@ describe("getPlaylist", () => {
       { browseId: `VL${PLAYLIST_ID}` },
       { continuation: firstToken(PLAYLIST_PAGE) },
     ]);
+  });
+
+  test("a YouTube Music curated list is browsed as a playlist", async () => {
+    const curated = "RDCLAK5uy_abcdefghijklmnopqrstuvwxyz0123456";
+    const { ytdl, bodies } = setup({ [BROWSE]: pages(SHORT_PLAYLIST_PAGE) });
+
+    const playlist = await ytdl.getPlaylist(curated);
+
+    expect(playlist.id).toBe(curated);
+    expect(bodies(BROWSE)).toMatchObject([{ browseId: `VL${curated}` }]);
   });
 
   test("a limit within the first page requests no continuation", async () => {

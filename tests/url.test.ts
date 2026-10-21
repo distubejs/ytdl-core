@@ -73,12 +73,18 @@ describe("parsePlaylistId", () => {
     ["https://www.youtube.com/playlist?list=PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5", "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"],
     ["https://www.youtube.com/watch?v=abcdefghijk&list=PL6B3937A5D230E335", "PL6B3937A5D230E335"],
     ["PL6B3937A5D230E335", "PL6B3937A5D230E335"],
+    ["RDCLAK5uy_abcdefghijklmnopqrstuvwxyz0123456", "RDCLAK5uy_abcdefghijklmnopqrstuvwxyz0123456"],
+    [
+      "https://music.youtube.com/playlist?list=RDCLAK5uy_abcdefghijklmnopqrstuvwxyz0123456",
+      "RDCLAK5uy_abcdefghijklmnopqrstuvwxyz0123456",
+    ],
   ])("%s", (input, expected) => {
     expect(parsePlaylistId(input)).toBe(expected);
   });
 
   test.each([
     "https://www.youtube.com/watch?v=abcdefghijk&list=WL",
+    "https://www.youtube.com/watch?v=abcdefghijk&list=RDabcdefghijk",
     "abcdefghijk",
     "https://example.com/playlist?list=PL6B3937A5D230E335",
   ])("returns undefined for %s", (input) => {
