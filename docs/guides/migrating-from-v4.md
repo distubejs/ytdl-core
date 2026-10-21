@@ -13,6 +13,12 @@ import { Ytdl } from "@distube/ytdl-core";
 const yt = new Ytdl();
 ```
 
+## Requirements and imports
+
+The package is ESM-only and has no default export. `import ytdl from "@distube/ytdl-core"` throws, and `require("@distube/ytdl-core")` returns the module namespace, not a function, so `ytdl(url)` fails. Use the named `Ytdl` import shown above.
+
+4.x ran on Node.js `>=20.18.1`. v5 needs `^22.22.2 || ^24.15.0 || >=26.0.0`, or Bun.
+
 ## Functions
 
 | 4.x                                        | v5                                                                   |
@@ -32,19 +38,19 @@ const yt = new Ytdl();
 
 ## Options
 
-| 4.x                           | v5                                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `quality: "highestaudio"`     | `quality: Quality.HighestAudio`; every string has a `Quality` value                        |
-| `filter: "audioonly"`         | `filter: { hasAudio: true, hasVideo: false }`; see [Choose a format](../formats/#filter)   |
-| `format`                      | `format`, unchanged                                                                        |
-| `range: { start, end }`       | `range`, unchanged                                                                         |
-| `begin`                       | `startTimeMs` in milliseconds, for SABR formats; see [Start time](../download/#start-time) |
-| `dlChunkSize`                 | `chunkSize`; there is no unchunked mode                                                    |
-| `liveBuffer`, `highWaterMark` | unchanged                                                                                  |
-| `lang`                        | `new Ytdl({ lang })`                                                                       |
-| `agent`, `requestOptions`     | `new Ytdl({ fetch })`                                                                      |
-| `IPv6Block`                   | a `fetch` bound to one local address; see [Proxies](../proxies/)                           |
-| `playerClients`               | `new Ytdl({ clients })` with `Client` values; see [Clients](../clients/)                   |
+| 4.x                           | v5                                                                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quality: "highestaudio"`     | `quality: Quality.HighestAudio`; every string has a `Quality` value                                                                                                                          |
+| `filter: "audioonly"`         | `filter: { hasAudio: true, hasVideo: false }`; see the [string mapping](../formats/#filter)                                                                                                  |
+| `format`                      | `format`, unchanged                                                                                                                                                                          |
+| `range: { start, end }`       | `range`, unchanged                                                                                                                                                                           |
+| `begin`                       | `startTimeMs` in milliseconds, for SABR formats only; see [Start time](../download/#start-time). 4.x also used `&begin=` to seek live and direct formats, and v5 has no equivalent for those |
+| `dlChunkSize`                 | `chunkSize`; there is no unchunked mode                                                                                                                                                      |
+| `liveBuffer`, `highWaterMark` | unchanged                                                                                                                                                                                    |
+| `lang`                        | `new Ytdl({ lang })`                                                                                                                                                                         |
+| `agent`, `requestOptions`     | `new Ytdl({ fetch })`                                                                                                                                                                        |
+| `IPv6Block`                   | a `fetch` bound to one local address; see [Proxies](../proxies/)                                                                                                                             |
+| `playerClients`               | `new Ytdl({ clients })` with `Client` values; see [Clients](../clients/)                                                                                                                     |
 
 ## Stream events
 

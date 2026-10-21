@@ -32,7 +32,9 @@ export interface YtdlOptions {
    */
   readonly clients?: readonly Client[];
   /**
-   * Every request goes through this; pass one bound to a proxy or local address.
+   * Every request goes through this; pass one bound to a proxy or local address. The player script and the lookup
+   * of its version are shared by every instance in the process, so whichever instance needs them first fetches them
+   * through its own `fetch`.
    * @defaultValue `globalThis.fetch`
    */
   readonly fetch?: typeof fetch;
