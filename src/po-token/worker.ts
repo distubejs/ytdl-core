@@ -9,7 +9,7 @@ import { serve } from "../worker-rpc.ts";
 
 export type FetchReply =
   | { readonly type: "fetched"; readonly id: number; readonly status: number; readonly body: ArrayBuffer }
-  | { readonly type: "fetched"; readonly id: number; readonly error: string };
+  | { readonly type: "fetched"; readonly id: number; readonly error: string; readonly name: string };
 
 export type FetchRequest = {
   readonly type: "fetch";
@@ -25,6 +25,7 @@ const REQUEST_KEY = "O43z0dpjhgX20SCx4KAo";
 const HOMEPAGE = "https://www.youtube.com/";
 // yt-dlp's accept-all consent cookie; without it EU hosts are redirected to consent.youtube.com.
 const CONSENT_COOKIE = "SOCS=CAI";
+const INTERPRETER_DOMAINS = ["google.com", "youtube.com"];
 
 if (!parentPort) throw new Error("po-token/worker runs only as a worker thread");
 const port = parentPort;
@@ -88,7 +89,14 @@ async function createMinter(): Promise<{ minter: WebPoMinter; refreshAt: number 
   const yt = { config_: config };
   Object.assign(globalThis, { yt });
   Object.assign(dom.window, { yt });
-  new Function(await fetchText(new URL(interpreterUrl, HOMEPAGE).href, "The BotGuard interpreter"))();
+  const interpreter = new URL(interpreterUrl, HOMEPAGE);
+  const trusted = INTERPRETER_DOMAINS.some(
+    (domain) => interpreter.hostname === domain || interpreter.hostname.endsWith(`.${domain}`),
+  );
+  if (interpreter.protocol !== "https:" || !trusted) {
+    throw new Error(`The BotGuard interpreter must come from Google over HTTPS, not ${interpreter.origin}`);
+  }
+  new Function(await fetchText(interpreter.href, "The BotGuard interpreter"))();
   const client = await BotGuardClient.create({
     program,
     globalName,
@@ -143,7 +151,7 @@ serve(
     const reply = message as FetchReply;
     const pending = fetches.get(reply.id);
     fetches.delete(reply.id);
-    if ("error" in reply) pending?.reject(new Error(reply.error));
+    if ("error" in reply) pending?.reject(Object.assign(new Error(reply.error), { name: reply.name }));
     else pending?.resolve(new Response(reply.body, { status: reply.status }));
   },
 );

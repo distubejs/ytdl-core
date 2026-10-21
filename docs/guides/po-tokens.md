@@ -28,6 +28,12 @@ const getPoToken = await createPoTokenProvider({ fetch: proxiedFetch });
 const yt = new Ytdl({ fetch: proxiedFetch, getPoToken });
 ```
 
+`timeoutMs` bounds each request the provider makes, meaning the response headers and each body chunk. It defaults to 30 000. A stalled request fails that mint with `REQUEST_FAILED`, and the next mint starts over:
+
+```ts
+const getPoToken = await createPoTokenProvider({ timeoutMs: 10_000 });
+```
+
 After `dispose()`, calls reject with `INVALID_STATE`. Aborting `options.signal` disposes it too.
 
 ## Your own minter

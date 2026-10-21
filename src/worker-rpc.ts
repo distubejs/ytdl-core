@@ -5,7 +5,9 @@ interface Call {
   readonly request: unknown;
 }
 
-type Reply = { readonly reply: number; readonly result: unknown } | { readonly reply: number; readonly error: string };
+type Reply =
+  | { readonly reply: number; readonly result: unknown }
+  | { readonly reply: number; readonly error: string; readonly name: string };
 
 const isCall = (message: unknown): message is Call =>
   typeof message === "object" && message !== null && "call" in message;
@@ -46,7 +48,7 @@ export function startWorker(file: URL, events: WorkerEvents = {}): WorkerRpc {
     const waiter = pending.get(message.reply);
     pending.delete(message.reply);
     if (pending.size === 0) worker.unref();
-    if ("error" in message) waiter?.reject(new Error(message.error));
+    if ("error" in message) waiter?.reject(Object.assign(new Error(message.error), { name: message.name }));
     else waiter?.resolve(message.result);
   });
   worker.on("error", stop);
@@ -88,6 +90,7 @@ export function serve(handle: (request: unknown) => unknown, onMessage?: (messag
           port.postMessage({
             reply: message.call,
             error: error instanceof Error ? error.message : String(error),
+            name: error instanceof Error ? String(error.name) : "Error",
           } satisfies Reply),
       );
   });

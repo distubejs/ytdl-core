@@ -1,6 +1,6 @@
 import type { Client } from "../clients.ts";
 import { YtdlError } from "../errors.ts";
-import { abortable } from "../http.ts";
+import { abortable, timed } from "../http.ts";
 import { startWorker, type WorkerRpc } from "../worker-rpc.ts";
 import type { FetchReply, FetchRequest } from "./worker.ts";
 
@@ -19,6 +19,12 @@ export interface PoTokenProviderOptions {
   readonly fetch?: typeof fetch;
   /** Aborting it disposes the provider. */
   readonly signal?: AbortSignal;
+  /**
+   * Milliseconds a request may wait for its response headers or its next body chunk before minting fails with
+   * `REQUEST_FAILED`.
+   * @defaultValue `30000`
+   */
+  readonly timeoutMs?: number;
 }
 
 /** Mints one token per `contentBinding`. */
@@ -33,8 +39,14 @@ const WORKER_URL = new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./
 
 /** Starts a BotGuard worker thread and resolves once it can mint; rejects if BotGuard refuses the environment. */
 export async function createPoTokenProvider(options: PoTokenProviderOptions = {}): Promise<PoTokenProvider> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new YtdlError("INVALID_ARGUMENT", "timeoutMs must be a finite number above 0");
+  }
   options.signal?.throwIfAborted();
-  const fetchFn = options.fetch ?? globalThis.fetch;
+  const fetchFn = timed(options.fetch ?? globalThis.fetch, timeoutMs);
+  const requests = new AbortController();
+  const requestSignal = options.signal ? AbortSignal.any([options.signal, requests.signal]) : requests.signal;
   let worker: WorkerRpc | undefined;
   let disposed = false;
 
@@ -45,11 +57,14 @@ export async function createPoTokenProvider(options: PoTokenProviderOptions = {}
         method: request.method,
         headers: request.headers,
         body: request.body,
-        signal: options.signal,
+        signal: requestSignal,
       });
       reply = { type: "fetched", id: request.id, status: response.status, body: await response.arrayBuffer() };
     } catch (error) {
-      reply = { type: "fetched", id: request.id, error: error instanceof Error ? error.message : String(error) };
+      reply =
+        error instanceof Error
+          ? { type: "fetched", id: request.id, error: error.message, name: error.name }
+          : { type: "fetched", id: request.id, error: String(error), name: "Error" };
     }
     target.post(reply, "body" in reply ? [reply.body] : []);
   };
@@ -76,6 +91,7 @@ export async function createPoTokenProvider(options: PoTokenProviderOptions = {}
 
   const dispose = async () => {
     disposed = true;
+    requests.abort(disposedError());
     options.signal?.removeEventListener("abort", disposeOnAbort);
     const stopping = worker;
     worker = undefined;

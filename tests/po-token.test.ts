@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import * as workerThreads from "node:worker_threads";
 import { YtdlError } from "../src/errors.ts";
-import type { PoTokenRequest } from "../src/po-token/index.ts";
+import type { PoTokenProviderOptions, PoTokenRequest } from "../src/po-token/index.ts";
 
 let workersStarted = 0;
 class CountingWorker extends workerThreads.Worker {
@@ -35,53 +35,67 @@ setTimeout(() => { throw new Error("boom"); });
 globalThis.fakeBotGuard = { a() { return []; } };`;
 
 const escapeForScript = (json: string) => json.replace(/[{}"]/g, (char) => `\\x${char.charCodeAt(0).toString(16)}`);
-const AT_N = {
-  responseContext: {},
-  bgChallenge: {
-    interpreterUrl: { privateDoNotAccessOrElseTrustedResourceUrlWrappedValue: "//www.google.com/js/th/fake.js" },
-    interpreterHash: "hash",
-    program: "program",
-    globalName: "fakeBotGuard",
-  },
+const homePage = (interpreterUrl: string) => {
+  const atN = {
+    responseContext: {},
+    bgChallenge: {
+      interpreterUrl: { privateDoNotAccessOrElseTrustedResourceUrlWrappedValue: interpreterUrl },
+      interpreterHash: "hash",
+      program: "program",
+      globalName: "fakeBotGuard",
+    },
+  };
+  return `<script>ytcfg.set({"EVENT_ID":"home-event","INNERTUBE_CONTEXT":{"client":{"clientName":"WEB"}}});</script>
+<script>if (window.ytAtN) {window.ytAtN({'R': '${escapeForScript(JSON.stringify(atN))}','T': 'trust',})}</script>`;
 };
-const HOME_PAGE = `<script>ytcfg.set({"EVENT_ID":"home-event","INNERTUBE_CONTEXT":{"client":{"clientName":"WEB"}}});</script>
-<script>if (window.ytAtN) {window.ytAtN({'R': '${escapeForScript(JSON.stringify(AT_N))}','T': 'trust',})}</script>`;
+const HOME_PAGE_URL = "https://www.youtube.com/";
+const GENERATE_IT_URL = "https://www.youtube.com/api/jnn/v1/GenerateIT";
 
 function fakeYouTube({
   ttl,
   threshold,
   interpreters = [],
+  page = homePage("//www.google.com/js/th/fake.js"),
 }: {
   ttl: number;
   threshold: number;
   interpreters?: string[];
+  page?: string;
 }) {
   const requests: string[] = [];
   const homePageHeaders: Headers[] = [];
+  const stalled = Promise.withResolvers<AbortSignal | null | undefined>();
   let challenges = 0;
   let integrityTokens = 0;
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     requests.push(url);
-    if (url === "https://www.youtube.com/") {
+    if (url === fake.stall) {
+      stalled.resolve(init?.signal);
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }
+    if (url === HOME_PAGE_URL) {
       homePageHeaders.push(new Headers(init?.headers));
-      return new Response(HOME_PAGE);
+      return new Response(page);
     }
     if (url === "https://www.google.com/js/th/fake.js") return new Response(interpreters[challenges++] ?? INTERPRETER);
-    if (
-      url === "https://www.youtube.com/api/jnn/v1/GenerateIT" &&
-      init?.body === '["O43z0dpjhgX20SCx4KAo","bg-response"]'
-    ) {
+    if (url === GENERATE_IT_URL && init?.body === '["O43z0dpjhgX20SCx4KAo","bg-response"]') {
       return Response.json([btoa(`it-${++integrityTokens}`), ttl, threshold, "fallback"]);
     }
     return new Response(null, { status: 400 });
   }) as typeof globalThis.fetch;
-  return { fetch, requests, homePageHeaders };
+  const fake = { fetch, requests, homePageHeaders, stall: undefined as string | undefined, stalled: stalled.promise };
+  return fake;
 }
 
 const providers: PoTokenProvider[] = [];
-async function provide(fake: ReturnType<typeof fakeYouTube>): Promise<PoTokenProvider> {
-  const provider = await createPoTokenProvider({ fetch: fake.fetch });
+async function provide(
+  fake: ReturnType<typeof fakeYouTube>,
+  options: Omit<PoTokenProviderOptions, "fetch"> = {},
+): Promise<PoTokenProvider> {
+  const provider = await createPoTokenProvider({ ...options, fetch: fake.fetch });
   providers.push(provider);
   return provider;
 }
@@ -96,6 +110,8 @@ const request = (overrides: Partial<PoTokenRequest> = {}): PoTokenRequest => ({
   ...overrides,
 });
 const decode = (token: string) => Buffer.from(token, "base64url").toString();
+const causeNames = (error: unknown): string[] =>
+  error instanceof Error ? [error.name, ...causeNames(error.cause)] : [];
 
 describe("createPoTokenProvider", () => {
   test("mints in a worker without touching host globals or loading jsdom on the main thread", async () => {
@@ -183,4 +199,56 @@ describe("createPoTokenProvider", () => {
     expect(decode(await provider(request()))).toBe("it-2|aqz-KE-bpKQ");
     expect(workersStarted).toBe(started + 1);
   });
+
+  test("a stalled refresh fails after timeoutMs and the next mint sets BotGuard up again", async () => {
+    const fake = fakeYouTube({ ttl: 60, threshold: 60 });
+    const provider = await provide(fake, { timeoutMs: 50 });
+    fake.stall = GENERATE_IT_URL;
+
+    const error = await provider(request()).catch((caught: unknown) => caught);
+    expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
+    expect(causeNames(error)).toContain("TimeoutError");
+
+    fake.stall = undefined;
+    expect(decode(await provider(request()))).toBe("it-2|aqz-KE-bpKQ");
+  });
+
+  test("dispose aborts the in-flight request and rejects the pending call with INVALID_STATE", async () => {
+    const fake = fakeYouTube({ ttl: 60, threshold: 60 });
+    const provider = await provide(fake);
+    fake.stall = HOME_PAGE_URL;
+
+    const pending = provider(request()).catch((caught: unknown) => caught);
+    const signal = await fake.stalled;
+    await provider.dispose();
+
+    expect(signal?.aborted).toBe(true);
+    expect(YtdlError.is(await pending, "INVALID_STATE")).toBe(true);
+  });
+
+  test.each([
+    "https://example.com/vm.js",
+    "https://www.google.com.example.com/vm.js",
+    "https://notyoutube.com/vm.js",
+    "http://www.google.com/js/th/fake.js",
+  ])("refuses the BotGuard interpreter %s without requesting it", async (interpreterUrl) => {
+    const fake = fakeYouTube({ ttl: 3600, threshold: 300, page: homePage(interpreterUrl) });
+
+    const error = await createPoTokenProvider({ fetch: fake.fetch }).catch((caught: unknown) => caught);
+    expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
+    expect(fake.requests).toEqual([HOME_PAGE_URL]);
+  });
+
+  test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects timeoutMs %p with INVALID_ARGUMENT before starting a worker",
+    async (timeoutMs) => {
+      const fake = fakeYouTube({ ttl: 3600, threshold: 300 });
+      const started = workersStarted;
+
+      const error = await createPoTokenProvider({ fetch: fake.fetch, timeoutMs }).catch((caught: unknown) => caught);
+      expect(YtdlError.is(error, "INVALID_ARGUMENT")).toBe(true);
+      expect(workersStarted).toBe(started);
+      expect(fake.requests).toEqual([]);
+    },
+  );
 });
