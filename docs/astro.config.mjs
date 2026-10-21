@@ -35,6 +35,7 @@ export default defineConfig({
             "guides/info",
             "guides/captions",
             "guides/search",
+            "guides/playlists",
             "guides/download",
             "guides/formats",
             "guides/live",
