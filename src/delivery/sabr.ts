@@ -45,6 +45,7 @@ export async function* readSabr(
   session: Session,
   start: number,
   last: number,
+  startTimeMs: number | undefined,
   signal: AbortSignal,
 ): AsyncGenerator<Uint8Array, ReadEnd, undefined> {
   const [{ SabrStream }, { buildSabrFormat, EnabledTrackTypes }] = await Promise.all([
@@ -52,9 +53,18 @@ export async function* readSabr(
     import("googlevideo/utils"),
   ]);
   let position = start;
+  const switched = (cause: YtdlError): "switched" => {
+    if (startTimeMs === undefined) return "switched";
+    const { itag } = session.format;
+    throw new YtdlError("NO_FORMAT", `itag ${itag}: the resumed format has a URL and cannot start at a time`, {
+      cause,
+    });
+  };
   for (;;) {
     if (!(await session.ensureFresh())) {
-      if (session.format.url !== undefined) return "switched";
+      if (session.format.url !== undefined) {
+        return switched(new YtdlError("REQUEST_FAILED", `itag ${session.format.itag}: URL expired`));
+      }
       continue;
     }
     const { info, format, input } = session;
@@ -96,6 +106,7 @@ export async function* readSabr(
       enabledTrackTypes: format.hasVideo ? EnabledTrackTypes.VIDEO_AND_AUDIO : EnabledTrackTypes.AUDIO_ONLY,
       isPostLiveDvr: false,
       maxRetries: SABR_REQUEST_RETRIES,
+      startTimeMs,
     });
     const abort = () => void stream.abort().catch(ignore);
     signal.addEventListener("abort", abort, { once: true });
@@ -131,10 +142,10 @@ export async function* readSabr(
       throw new YtdlError("REQUEST_FAILED", `itag ${format.itag}: getPoToken failed`, { cause: mintFailure });
     }
     const reason = redact(failure instanceof Error ? failure.message : String(failure));
-    await session.resume(
-      "SABR session failed",
-      new YtdlError("REQUEST_FAILED", `itag ${format.itag}: SABR session failed: ${reason}`, { cause: failure }),
-    );
-    if (session.format.url !== undefined) return "switched";
+    const failed = new YtdlError("REQUEST_FAILED", `itag ${format.itag}: SABR session failed: ${reason}`, {
+      cause: failure,
+    });
+    await session.resume("SABR session failed", failed);
+    if (session.format.url !== undefined) return switched(failed);
   }
 }

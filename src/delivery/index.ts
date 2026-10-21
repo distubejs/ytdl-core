@@ -40,6 +40,7 @@ interface StreamOptions {
 async function* deliver(prepare: PrepareDelivery, signal: AbortSignal): AsyncGenerator<Uint8Array, void, undefined> {
   try {
     const input = await prepare(signal);
+    checkStartTime(input.options, input.format);
     const session = new Session(input, signal);
     const liveBuffer = input.options.liveBuffer ?? DEFAULT_LIVE_BUFFER_MS;
     if (input.format.isHLS) yield* readLive(session, liveBuffer, signal);
@@ -51,6 +52,15 @@ async function* deliver(prepare: PrepareDelivery, signal: AbortSignal): AsyncGen
   }
 }
 
+function checkStartTime({ startTimeMs, range }: DownloadOptions, { itag, url }: VideoFormat): void {
+  if (startTimeMs === undefined) return;
+  if (!Number.isFinite(startTimeMs) || startTimeMs < 0) {
+    throw new YtdlError("INVALID_ARGUMENT", `startTimeMs must be a finite number from 0, got ${startTimeMs}`);
+  }
+  if (range !== undefined) throw new YtdlError("INVALID_ARGUMENT", "startTimeMs cannot be combined with range");
+  if (url !== undefined) throw new YtdlError("INVALID_ARGUMENT", `itag ${itag}: startTimeMs needs a SABR format`);
+}
+
 async function* readFile(
   session: Session,
   options: DownloadOptions,
@@ -58,8 +68,12 @@ async function* readFile(
 ): AsyncGenerator<Uint8Array, void, undefined> {
   const { itag, contentLength } = session.format;
   const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
+  const { startTimeMs } = options;
   const start = options.range?.start ?? 0;
-  const last = Math.min(options.range?.end ?? Infinity, contentLength === undefined ? Infinity : contentLength - 1);
+  const last =
+    startTimeMs === undefined
+      ? Math.min(options.range?.end ?? Infinity, contentLength === undefined ? Infinity : contentLength - 1)
+      : Infinity;
   if (!Number.isSafeInteger(chunkSize) || chunkSize < 1) {
     throw new YtdlError("INVALID_ARGUMENT", `chunkSize must be a positive integer, got ${chunkSize}`);
   }
@@ -71,7 +85,7 @@ async function* readFile(
   for (;;) {
     const reader =
       session.format.url === undefined
-        ? readSabr(session, position, last, signal)
+        ? readSabr(session, position, last, startTimeMs, signal)
         : readRanged(session, position, last, chunkSize);
     try {
       for (;;) {

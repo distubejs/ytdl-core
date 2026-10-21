@@ -91,8 +91,21 @@ export const Filter = {
   AudioOnly: "audioonly",
 } as const;
 
-/** A `Filter` value or a predicate. */
-export type Filter = (typeof Filter)[keyof typeof Filter] | ((format: FormatMetadata) => boolean);
+/** Format fields that must all match. A codec matches exactly or by its family before the first `.`. */
+export interface FormatCriteria {
+  readonly hasAudio?: boolean;
+  readonly hasVideo?: boolean;
+  readonly audioCodec?: string;
+  readonly videoCodec?: string;
+  readonly container?: string;
+  readonly isDrc?: boolean;
+  readonly isLive?: boolean;
+}
+
+type SingleFilter = (typeof Filter)[keyof typeof Filter] | FormatCriteria | ((format: FormatMetadata) => boolean);
+
+/** A `Filter` value, criteria, a predicate, or a list of those tried in order. */
+export type Filter = SingleFilter | readonly SingleFilter[];
 
 export interface ChooseFormatOptions {
   /**
@@ -100,7 +113,10 @@ export interface ChooseFormatOptions {
    * @defaultValue `Quality.Highest`
    */
   readonly quality?: Quality;
-  /** A `Filter` value or `(format) => boolean`. */
+  /**
+   * A `Filter` value, `FormatCriteria`, `(format) => boolean`, or a list of those. A list picks with the
+   * first entry that yields a format under `quality`.
+   */
   readonly filter?: Filter;
   /** Wins over `quality` and `filter`. */
   readonly format?: VideoFormat;
@@ -109,6 +125,11 @@ export interface ChooseFormatOptions {
 export interface DownloadOptions extends ChooseFormatOptions, LookupOptions {
   /** Inclusive byte range of the format. */
   readonly range?: { readonly start?: number; readonly end?: number };
+  /**
+   * Milliseconds to start at, for a format without a `url` and without `range`. The stream sends the
+   * initialization segment, then media from the segment containing this time, and reports no total.
+   */
+  readonly startTimeMs?: number;
   /**
    * Bytes per ranged request.
    * @defaultValue 10 MiB

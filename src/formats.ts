@@ -1,7 +1,7 @@
 import type { Client } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { at, isRecord, type Json, num, str } from "./json.ts";
-import type { ChooseFormatOptions, Filter, FormatMetadata, VideoFormat } from "./types.ts";
+import type { ChooseFormatOptions, Filter, FormatCriteria, FormatMetadata, Quality, VideoFormat } from "./types.ts";
 
 export interface SabrSource {
   /** `serverAbrStreamingUrl` with `n` solved. */
@@ -160,23 +160,57 @@ const sortFormats = compare([
   audioEncoding,
 ]);
 
-const FILTERS: Readonly<Record<Exclude<Filter, (format: FormatMetadata) => boolean>, Rank>> = {
-  audioandvideo: (format) => Number(format.hasVideo && format.hasAudio),
-  video: (format) => Number(format.hasVideo),
-  videoonly: (format) => Number(format.hasVideo && !format.hasAudio),
-  audio: (format) => Number(format.hasAudio),
-  audioonly: (format) => Number(format.hasAudio && !format.hasVideo),
+type NamedFilter = Extract<Filter, string>;
+type Matcher = (format: FormatMetadata) => boolean;
+
+const NAMED_FILTERS: Readonly<Record<NamedFilter, FormatCriteria>> = {
+  audioandvideo: { hasAudio: true, hasVideo: true },
+  video: { hasVideo: true },
+  videoonly: { hasVideo: true, hasAudio: false },
+  audio: { hasAudio: true },
+  audioonly: { hasAudio: true, hasVideo: false },
 };
 
-export function filterFormats<Format extends FormatMetadata>(
-  formats: readonly Format[],
-  filter: Filter | undefined,
-): Format[] {
-  if (filter === undefined) return [...formats];
-  if (typeof filter === "function") return formats.filter((format) => filter(format));
-  const test = FILTERS[filter];
-  if (!test) throw new YtdlError("INVALID_ARGUMENT", `Unknown filter ${JSON.stringify(filter)}`);
-  return formats.filter((format) => test(format) === 1);
+const CRITERIA: Readonly<Record<keyof FormatCriteria, "boolean" | "string">> = {
+  hasAudio: "boolean",
+  hasVideo: "boolean",
+  audioCodec: "string",
+  videoCodec: "string",
+  container: "string",
+  isDrc: "boolean",
+  isLive: "boolean",
+};
+
+const isCriterion = (key: string): key is keyof FormatCriteria => Object.hasOwn(CRITERIA, key);
+
+function fieldMatches(format: FormatMetadata, key: keyof FormatCriteria, wanted: string | boolean): boolean {
+  const value = format[key];
+  if (value === wanted) return true;
+  return (key === "audioCodec" || key === "videoCodec") && typeof value === "string" && value.split(".")[0] === wanted;
+}
+
+function matcher(filter: unknown): Matcher {
+  if (typeof filter === "function") return (format) => Boolean(filter(format));
+  const criteria =
+    typeof filter === "string" && Object.hasOwn(NAMED_FILTERS, filter) ? NAMED_FILTERS[filter as NamedFilter] : filter;
+  if (!isRecord(criteria)) throw new YtdlError("INVALID_ARGUMENT", `Unknown filter ${JSON.stringify(filter)}`);
+  const fields: [keyof FormatCriteria, string | boolean][] = [];
+  for (const [key, wanted] of Object.entries(criteria)) {
+    if (wanted === undefined) continue;
+    if (!isCriterion(key)) throw new YtdlError("INVALID_ARGUMENT", `Unknown filter criterion ${JSON.stringify(key)}`);
+    if (typeof wanted !== CRITERIA[key]) {
+      throw new YtdlError("INVALID_ARGUMENT", `Filter criterion ${key} must be a ${CRITERIA[key]}`);
+    }
+    fields.push([key, wanted as string | boolean]);
+  }
+  return (format) => fields.every(([key, wanted]) => fieldMatches(format, key, wanted));
+}
+
+function matchers(filter: Filter | undefined): Matcher[] {
+  if (filter === undefined) return [() => true];
+  if (!Array.isArray(filter)) return [matcher(filter)];
+  if (filter.length === 0) throw new YtdlError("INVALID_ARGUMENT", "A filter list needs at least one entry");
+  return filter.map(matcher);
 }
 
 // YouTube gives DRC variants and dubbed tracks the itag of the original.
@@ -185,47 +219,53 @@ export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
 }
 
 /**
- * Filters, then picks by quality. An explicit `format` is matched in `formats`, so a fresh list's
- * URL replaces a stale one. A DRC variant is picked only when no original matches.
+ * Filters, then picks by quality. A filter list picks with its first entry that yields a format. An
+ * explicit `format` is matched in `formats`, so a fresh list's URL replaces a stale one. A DRC variant
+ * is picked only when no original matches.
  */
 export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
   const wanted = options.format;
   if (wanted) return formats.find((format) => sameFormat(format, wanted)) ?? wanted;
-  const matching = filterFormats(formats, options.filter);
-  const originals = matching.filter((format) => !format.isDrc);
-  const candidates = originals.length > 0 ? originals : matching;
   const quality = options.quality ?? "highest";
-  let chosen: VideoFormat | undefined;
-  if (typeof quality === "number") chosen = candidates.find((format) => format.itag === quality);
-  else if (Array.isArray(quality)) {
-    for (const itag of quality) {
-      chosen = candidates.find((format) => format.itag === itag);
-      if (chosen) break;
-    }
-  } else if (quality === "highest" || quality === "lowest") {
-    const sorted = candidates.toSorted(sortFormats);
-    chosen = quality === "highest" ? sorted[0] : sorted.at(-1);
-  } else if (quality === "highestaudio" || quality === "lowestaudio") {
-    const sorted = filterFormats(candidates, "audio").toSorted(byAudio);
-    if (quality === "lowestaudio") chosen = sorted.at(-1);
-    else {
-      const best = sorted[0];
-      chosen =
-        best &&
-        sorted
-          .filter((format) => byAudio(best, format) === 0)
-          .toSorted((a, b) => qualityHeight(a) - qualityHeight(b))[0];
-    }
-  } else if (quality === "highestvideo" || quality === "lowestvideo") {
-    const sorted = filterFormats(candidates, "video").toSorted(byVideo);
-    if (quality === "lowestvideo") chosen = sorted.at(-1);
-    else {
-      const best = sorted[0];
-      chosen =
-        best &&
-        sorted.filter((format) => byVideo(best, format) === 0).toSorted((a, b) => audioBitrate(a) - audioBitrate(b))[0];
-    }
+  for (const matches of matchers(options.filter)) {
+    const matching = formats.filter(matches);
+    const originals = matching.filter((format) => !format.isDrc);
+    const chosen = pick(originals.length > 0 ? originals : matching, quality);
+    if (chosen) return chosen;
   }
-  if (!chosen) throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
-  return chosen;
+  throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
+}
+
+function pick(candidates: readonly VideoFormat[], quality: Quality): VideoFormat | undefined {
+  if (typeof quality === "number") return candidates.find((format) => format.itag === quality);
+  if (Array.isArray(quality)) {
+    for (const itag of quality) {
+      const chosen = candidates.find((format) => format.itag === itag);
+      if (chosen) return chosen;
+    }
+    return undefined;
+  }
+  if (quality === "highest" || quality === "lowest") {
+    const sorted = candidates.toSorted(sortFormats);
+    return quality === "highest" ? sorted[0] : sorted.at(-1);
+  }
+  if (quality === "highestaudio" || quality === "lowestaudio") {
+    const sorted = candidates.filter((format) => format.hasAudio).toSorted(byAudio);
+    if (quality === "lowestaudio") return sorted.at(-1);
+    const best = sorted[0];
+    return (
+      best &&
+      sorted.filter((format) => byAudio(best, format) === 0).toSorted((a, b) => qualityHeight(a) - qualityHeight(b))[0]
+    );
+  }
+  if (quality === "highestvideo" || quality === "lowestvideo") {
+    const sorted = candidates.filter((format) => format.hasVideo).toSorted(byVideo);
+    if (quality === "lowestvideo") return sorted.at(-1);
+    const best = sorted[0];
+    return (
+      best &&
+      sorted.filter((format) => byVideo(best, format) === 0).toSorted((a, b) => audioBitrate(a) - audioBitrate(b))[0]
+    );
+  }
+  return undefined;
 }

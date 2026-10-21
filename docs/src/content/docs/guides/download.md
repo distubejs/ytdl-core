@@ -39,6 +39,16 @@ yt.download(info, { range: { start: 0, end: 1_048_575 } }); // the first MiB
 yt.download(info, { range: { start: 5_000_000 } }); // from 5 MB to the end
 ```
 
+## Start time
+
+A SABR format, one without a `url`, can start at a time instead. `startTimeMs` starts at the media segment that contains it, so the first media bytes may come a few seconds early:
+
+```ts
+yt.download(info, { format, startTimeMs: 90_000 }); // from about 1:30 to the end
+```
+
+The stream sends the format's initialization segment first, then media to the end, and `onProgress` reports no `total`. `startTimeMs` with a direct format or with `range` fails with `INVALID_ARGUMENT`. Seek a direct format with `range` through its container index.
+
 ## Progress
 
 ```ts

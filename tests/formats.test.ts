@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { filterFormats, parseFormats } from "../src/formats.ts";
-import { chooseFormat, YtdlError } from "../src/index.ts";
-import type { VideoFormat } from "../src/index.ts";
+import { parseFormats } from "../src/formats.ts";
+import { chooseFormat, Filter, Quality, YtdlError } from "../src/index.ts";
+import type { ChooseFormatOptions, FormatCriteria, VideoFormat } from "../src/index.ts";
 import { fixture } from "./fake-youtube.ts";
 
 // The adaptive formats of a recorded VISIONOS answer, plus one muxed format. Assertions hold for any
@@ -25,11 +25,34 @@ const muxed: VideoFormat = {
   hasAudio: true,
   hasVideo: true,
 };
+const audio = (itag: number, container: string, audioCodec: string, audioBitrate: number): VideoFormat => ({
+  ...muxed,
+  itag,
+  container,
+  mimeType: `audio/${container}; codecs="${audioCodec}"`,
+  codecs: audioCodec,
+  videoCodec: undefined,
+  audioCodec,
+  qualityLabel: undefined,
+  width: undefined,
+  height: undefined,
+  audioBitrate,
+  hasVideo: false,
+});
 const formats: readonly VideoFormat[] = [...recorded, muxed];
 const audioOnly = formats.filter((format) => format.hasAudio && !format.hasVideo);
 const video = formats.filter((format) => format.hasVideo);
 const videoOnly = video.filter((format) => !format.hasAudio);
 const most = (list: readonly VideoFormat[], value: (format: VideoFormat) => number) => Math.max(...list.map(value));
+
+function errorCode(options: ChooseFormatOptions, list: readonly VideoFormat[] = formats): string | undefined {
+  try {
+    chooseFormat(list, options);
+  } catch (error) {
+    return YtdlError.is(error) ? error.code : String(error);
+  }
+  return undefined;
+}
 
 describe("format metadata", () => {
   test("reads container, codecs and media kind from the mime type", () => {
@@ -96,15 +119,7 @@ describe("chooseFormat", () => {
 
   test("nothing matching throws NO_FORMAT", () => {
     const unknown = most(formats, (format) => format.itag) + 1;
-    const error = (() => {
-      try {
-        chooseFormat(formats, { quality: unknown });
-      } catch (caught) {
-        return caught;
-      }
-      return undefined;
-    })();
-    expect(YtdlError.is(error, "NO_FORMAT")).toBe(true);
+    expect(errorCode({ quality: unknown })).toBe("NO_FORMAT");
   });
 });
 
@@ -135,10 +150,52 @@ describe("stable-volume variants", () => {
   });
 });
 
-describe("filterFormats", () => {
-  test("keeps matching formats in their original order", () => {
-    expect(filterFormats(formats, "audio")).toEqual(formats.filter((format) => format.hasAudio));
-    expect(filterFormats(formats, "audioandvideo")).toEqual([muxed]);
-    expect(filterFormats(formats, "videoonly")).toEqual(videoOnly);
+describe("filters", () => {
+  const opus = audio(251, "webm", "opus", 130);
+  const aac = audio(140, "mp4", "mp4a.40.2", 160);
+
+  test.each([
+    [Filter.AudioAndVideo, { hasAudio: true, hasVideo: true }, undefined],
+    [Filter.Video, { hasVideo: true }, undefined],
+    [Filter.VideoOnly, { hasAudio: false, hasVideo: true }, "NO_FORMAT"],
+    [Filter.Audio, { hasAudio: true }, undefined],
+    [Filter.AudioOnly, { hasAudio: true, hasVideo: false }, "NO_FORMAT"],
+  ])("%s keeps only formats with its media kinds", (filter, kinds, onlyMuxed) => {
+    for (const quality of [Quality.Highest, Quality.Lowest]) {
+      expect(chooseFormat(formats, { filter, quality })).toMatchObject(kinds);
+    }
+    expect(errorCode({ filter }, [muxed])).toBe(onlyMuxed);
+  });
+
+  test("criteria pick Opus audio-only over better AAC and muxed audio", () => {
+    const filter = { hasVideo: false, audioCodec: "opus" };
+    expect(chooseFormat([aac, opus, muxed], { filter, quality: Quality.HighestAudio })).toBe(opus);
+  });
+
+  test("a codec criterion matches its family before the first dot", () => {
+    expect(chooseFormat([opus, aac], { filter: { audioCodec: "mp4a" } })).toBe(aac);
+    expect(chooseFormat([opus, aac], { filter: { audioCodec: "mp4a.40.2" } })).toBe(aac);
+    expect(errorCode({ filter: { audioCodec: "mp4" } }, [opus, aac])).toBe("NO_FORMAT");
+  });
+
+  test("a list picks with its first entry that yields a format", () => {
+    const opusFirst = [{ hasVideo: false, audioCodec: "opus" }, { hasVideo: false }, Filter.Audio];
+    const quality = Quality.HighestAudio;
+    expect(chooseFormat([aac, opus, muxed], { filter: opusFirst, quality })).toBe(opus);
+    expect(chooseFormat([aac, muxed], { filter: opusFirst, quality })).toBe(aac);
+    expect(chooseFormat([muxed], { filter: opusFirst, quality })).toBe(muxed);
+  });
+
+  test("a list where no entry matches throws NO_FORMAT", () => {
+    expect(errorCode({ filter: [Filter.AudioOnly, { hasVideo: false }] }, [muxed])).toBe("NO_FORMAT");
+  });
+
+  test.each([
+    ["an unknown criterion", { bitrate: 128 }],
+    ["a criterion of the wrong type", { hasVideo: "no" }],
+    ["an unknown name", "audio-only"],
+    ["an empty list", []],
+  ])("%s throws INVALID_ARGUMENT", (_, filter) => {
+    expect(errorCode({ filter: filter as FormatCriteria })).toBe("INVALID_ARGUMENT");
   });
 });

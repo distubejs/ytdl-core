@@ -26,6 +26,8 @@ export interface SabrFormatSpec {
   readonly bytes: Uint8Array;
   /** Media segment count, default 4. */
   readonly segments?: number;
+  /** Default 100 seconds, split evenly across the segments. */
+  readonly durationMs?: number;
   readonly isDrc?: boolean;
   readonly audioTrackId?: string;
   readonly bitrate?: number;
@@ -51,7 +53,7 @@ function adaptiveFormat(format: SabrFormatSpec): Record<string, unknown> {
     bitrate: format.bitrate ?? (isAudio(format) ? 130_000 : 2_000_000),
     lastModified: LAST_MODIFIED,
     contentLength: String(format.bytes.length),
-    approxDurationMs: String(DURATION_MS),
+    approxDurationMs: String(format.durationMs ?? DURATION_MS),
     xtags: xtags(format),
   };
   if (!isAudio(format)) {
@@ -110,7 +112,7 @@ interface Segment {
 function splitIntoSegments(format: SabrFormatSpec): { init: Uint8Array; media: Segment[] } {
   const count = format.segments ?? 4;
   const cut = (i: number) => Math.round((i * format.bytes.length) / (count + 1));
-  const time = (i: number) => Math.round((i * DURATION_MS) / count);
+  const time = (i: number) => Math.round((i * (format.durationMs ?? DURATION_MS)) / count);
   const media = Array.from({ length: count }, (_, i) => ({
     start: time(i),
     end: time(i + 1),
@@ -166,6 +168,7 @@ export function sabrServer(options: SabrServerOptions) {
     ump.write(UMPPartId.NEXT_REQUEST_POLICY, NextRequestPolicy.encode({ backoffTimeMs }).finish());
     let headerId = 0;
     for (const { format, key, init, media } of wanted) {
+      const durationMs = String(format.durationMs ?? DURATION_MS);
       const formatId = { itag: format.itag, lastModified: LAST_MODIFIED, xtags: xtags(format) };
       const writeSegment = (header: MediaHeader, bytes: Uint8Array) => {
         const id = headerId++;
@@ -185,8 +188,8 @@ export function sabrServer(options: SabrServerOptions) {
             videoId,
             formatId,
             mimeType: format.mimeType,
-            endTimeMs: String(DURATION_MS),
-            endTimeTicks: String(DURATION_MS),
+            endTimeMs: durationMs,
+            endTimeTicks: durationMs,
             endTimeTimescale: "1000",
             endSegmentNum: String(media.length),
           }).finish(),

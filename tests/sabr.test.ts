@@ -51,6 +51,25 @@ async function download(ytdl: Ytdl, options: DownloadOptions, video: string | Vi
   return { body, progress: seen.progress, retries: seen.retries };
 }
 
+function downloadError(ytdl: Ytdl, options: DownloadOptions): Promise<unknown> {
+  return ytdl
+    .download(ID, options)
+    .toArray()
+    .then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+}
+
+/** An init segment of 1,000 bytes, then 1,000 bytes per 10 seconds. */
+const tenSecondSegments = (count: number): SabrFormatSpec => ({
+  itag: 251,
+  mimeType: OPUS,
+  bytes: bytes((count + 1) * 1_000, 23),
+  segments: count,
+  durationMs: count * 10_000,
+});
+
 describe("SABR delivery", () => {
   test("SABR-only formats are listed without a URL", async () => {
     const info = await setup().ytdl.getInfo(ID);
@@ -203,5 +222,79 @@ describe("SABR delivery", () => {
 
     expect(error).toMatchObject({ code: "REQUEST_FAILED", cause: minter });
     expect(retries).toEqual([]);
+  });
+
+  test("a start time streams the init segment, then from the segment containing it to the end without a retry", async () => {
+    const track = tenSecondSegments(6);
+    const { sabr, ytdl } = setup({ formats: [track] });
+    const { body, progress, retries } = await download(ytdl, { quality: 251, startTimeMs: 45_000 });
+
+    expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(5_000, 7_000)]));
+    expect(sabr.requests[0]?.playerTimeMs).toBe(45_000);
+    expect(retries).toEqual([]);
+    expect(progress.at(-1)).toEqual({ chunkBytes: expect.any(Number), downloaded: 3_000, total: undefined });
+  });
+
+  test("a time-started session that fails partway restarts at the time without gap or repeat", async () => {
+    const track = tenSecondSegments(10);
+    const { body, retries } = await download(setup({ formats: [track], failUntilResumed: true }).ytdl, {
+      quality: 251,
+      startTimeMs: 45_000,
+    });
+
+    expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(5_000)]));
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
+  });
+
+  test.each([
+    ["a negative start time", { startTimeMs: -1 }],
+    ["an infinite start time", { startTimeMs: Infinity }],
+    ["a start time with a range", { startTimeMs: 1_000, range: { start: 0 } }],
+  ])("%s errors with INVALID_ARGUMENT before any SABR request", async (_, options) => {
+    const { sabr, ytdl } = setup();
+
+    expect(await downloadError(ytdl, { quality: 251, ...options })).toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(sabr.requests).toEqual([]);
+  });
+
+  test("a direct format rejects a start time before any media request", async () => {
+    const media: URL[] = [];
+    const { ytdl } = setup({
+      player: () => playable(ID, [audioFormat(251, { contentLength: "1000" })]),
+      media: (url) => {
+        media.push(url);
+        return new Response(new Uint8Array(1_000));
+      },
+    });
+
+    expect(await downloadError(ytdl, { quality: 251, startTimeMs: 1_000 })).toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(media).toEqual([]);
+  });
+
+  test("a time-started session resumed onto a direct URL fails instead of reading bytes from the file start", async () => {
+    const track = tenSecondSegments(10);
+    let answers = 0;
+    const media: URL[] = [];
+    const { ytdl } = setup({
+      formats: [track],
+      failUntilResumed: true,
+      player: () =>
+        answers++ === 0
+          ? sabrPlayable(ID, [track])
+          : playable(ID, [audioFormat(251, { contentLength: String(track.bytes.length) })]),
+      media: (url) => {
+        media.push(url);
+        return new Response(track.bytes.slice());
+      },
+    });
+
+    const error = await downloadError(ytdl, { quality: 251, startTimeMs: 45_000 });
+
+    expect(error).toMatchObject({ code: "NO_FORMAT" });
+    expect((error as Error).cause).toMatchObject({
+      code: "REQUEST_FAILED",
+      message: expect.stringContaining("SABR session failed"),
+    });
+    expect(media).toEqual([]);
   });
 });
