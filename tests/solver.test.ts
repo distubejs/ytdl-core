@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Client, Ytdl } from "../src/index.ts";
 import { YtdlError } from "../src/errors.ts";
 import { loadPlayer } from "../src/solver/index.ts";
+import { ciphered, fakeYouTube, playable, TV, VISIONOS } from "./fake-youtube.ts";
+import hostile from "./fixtures/solver/hostile-players.json" with { type: "json" };
 
 const PLAYER = readFileSync(new URL("./fixtures/solver/player.js", import.meta.url), "utf8");
 const HOOK = "var hook=function(){};";
@@ -112,6 +117,49 @@ describe("loadPlayer", () => {
     const healthy = await loadPlayer({ fetch, playerId: "c0000002" });
     const [solved] = await healthy.solve([{ url: MEDIA }]);
     expect(new URL(solved ?? "").searchParams.get("n")).toBe("xyz3");
+  });
+
+  test.each(hostile.cases.map((player, index) => [player.name, player, `h000000${index}`] as const))(
+    "a player that %s gets its pinned outcome, never reaches the host and leaves the worker solving",
+    async (_, { payload, outcome }, playerId) => {
+      const dir = mkdtempSync(join(tmpdir(), "ytdl-solver-"));
+      const marker = join(dir, "escaped");
+      const prelude = hostile.prelude.replace("MARKER", JSON.stringify(marker));
+      const { fetch } = youtube({ [playerId]: PLAYER.replace(HOOK, `${prelude}${payload}`), h0000099: PLAYER });
+      try {
+        const result = await loadPlayer({ fetch, playerId })
+          .then((player) => player.solve([{ url: MEDIA }]))
+          .then(
+            ([solved]) => new URL(solved ?? "").searchParams.get("n"),
+            (reason: unknown) => (YtdlError.is(reason) ? reason.code : reason),
+          );
+        expect(result).toBe(outcome);
+        expect(existsSync(marker)).toBe(false);
+
+        const healthy = await loadPlayer({ fetch, playerId: "h0000099" });
+        const [solved] = await healthy.solve([{ url: MEDIA }]);
+        expect(new URL(solved ?? "").searchParams.get("n")).toBe("xyz3");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("an n transform that returns its input fails the rung as PLAYER_SOLVE_FAILED and the next client answers", async () => {
+    const failing = PLAYER.replace(
+      "var nT=function(a){return a+a.length};",
+      'var nT=function(a){return "enhanced_except_gZ4B_"+a};',
+    );
+    const id = "aqz-KE-bpKQ";
+    const yt = fakeYouTube({ player: ({ client }) => (client === TV ? ciphered(id) : playable(id)) });
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input).includes("/s/player/") ? new Response(failing) : yt.fetch(input, init)) as typeof globalThis.fetch;
+
+    const info = await new Ytdl({ fetch, playerId: "c0000004", clients: [Client.Tv, Client.VisionOS] }).getInfo(id);
+    expect(info.client).toBe("visionos");
+    expect(yt.clients()).toEqual([TV, VISIONOS]);
+    const error = await solveError(new Ytdl({ fetch, playerId: "c0000004", clients: [Client.Tv] }).getInfo(id));
+    expect(error.code).toBe("PLAYER_SOLVE_FAILED");
   });
 
   test("a player without the URL builder fails to load as PLAYER_SOLVE_FAILED", async () => {

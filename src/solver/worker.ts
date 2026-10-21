@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import vm from "node:vm";
 import { type ESTree, parseScript } from "meriyah";
 import { serve } from "../worker-rpc.ts";
@@ -13,6 +14,7 @@ export type SolverRequest =
   | { readonly kind: "solve"; readonly handle: number; readonly challenges: readonly Challenge[] };
 
 const TIMEOUT_MS = 2000;
+const NO_MESSAGE = "Player code threw a value without a message";
 
 // The stubs yt-dlp/ejs gives the player; every URL builder must agree, as in ejs `multiTry`.
 const SETUP = `
@@ -51,12 +53,12 @@ var __ytdl = {
   },
 };
 `;
-const SOLVE = new vm.Script("__ytdl.solveAll(__ytdlChallenges)");
-
 const players = new Map<number, vm.Context>();
 
 function prepare(source: string): vm.Context {
-  const { block, skip } = playerBody(parseScript(source, { ranges: true }));
+  const program = parseScript(source, { ranges: true });
+  if (hasDynamicImport(program)) throw new Error("The player uses import()");
+  const { block, skip } = playerBody(program);
   // Top-level calls other than assignments touch the DOM; the builder needs only declarations.
   const kept = block.body
     .slice(skip)
@@ -75,9 +77,22 @@ function prepare(source: string): vm.Context {
     `;__ytdl.builders = [${builders.join(", ")}];`,
     source.slice(end(block) - 1),
   ].join("\n");
-  const context = vm.createContext({}, { microtaskMode: "afterEvaluate" });
-  vm.runInContext(code, context, { timeout: TIMEOUT_MS });
+  const context = vm.createContext(Object.create(null), {
+    microtaskMode: "afterEvaluate",
+    codeGeneration: { strings: false },
+  });
+  runPlayer(code, context);
   return context;
+}
+
+function hasDynamicImport(program: ESTree.Program): boolean {
+  const pending: unknown[] = [program];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    if (typeof node !== "object" || node === null) continue;
+    if ("type" in node && node.type === "ImportExpression") return true;
+    for (const value of Object.values(node)) pending.push(value);
+  }
+  return false;
 }
 
 /** `var _yt_player={};(function(g){var window=this;...})(_yt_player)` or `(function(){...}).call(this)`. */
@@ -149,16 +164,37 @@ function slice(source: string, node: ESTree.Node): string {
   return source.slice(start(node), end(node));
 }
 
+function runPlayer(code: string, context: vm.Context): unknown {
+  const guarded = `try{\n${code}\n}catch(e){let m;try{m=e.message}catch{}throw typeof m==="string"?m:${JSON.stringify(NO_MESSAGE)}}`;
+  try {
+    return vm.runInContext(guarded, context, { timeout: TIMEOUT_MS });
+  } catch (error) {
+    throw new Error(ownMessage(error), { cause: error });
+  }
+}
+
+function ownMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && error !== null && !types.isProxy(error)) {
+    const message: unknown = Object.getOwnPropertyDescriptor(error, "message")?.value;
+    if (typeof message === "string") return message;
+  }
+  return NO_MESSAGE;
+}
+
 function solve(handle: number, challenges: readonly Challenge[]): Challenge[] {
   const context = players.get(handle);
   if (!context) throw new Error("Player is no longer loaded");
-  context["__ytdlChallenges"] = challenges;
-  const out: unknown = JSON.parse(String(SOLVE.runInContext(context, { timeout: TIMEOUT_MS })));
+  const raw = runPlayer(`__ytdl.solveAll(JSON.parse(${JSON.stringify(JSON.stringify(challenges))}))`, context);
+  if (typeof raw !== "string") throw new Error("URL builder returned no answers");
+  const out: unknown = JSON.parse(raw);
   if (!Array.isArray(out) || out.length !== challenges.length) throw new Error("URL builder returned no answers");
   return challenges.map((challenge, index) => {
     const [sig, n]: unknown[] = Array.isArray(out[index]) ? out[index] : [];
     if (challenge.sig !== undefined && typeof sig !== "string") throw new Error("URL builder returned no signature");
-    if (challenge.n !== undefined && typeof n !== "string") throw new Error("URL builder returned no n");
+    if (challenge.n !== undefined && (typeof n !== "string" || n.endsWith(challenge.n))) {
+      throw new Error("URL builder did not transform n");
+    }
     return {
       sig: challenge.sig !== undefined && typeof sig === "string" ? sig : undefined,
       n: challenge.n !== undefined && typeof n === "string" ? n : undefined,

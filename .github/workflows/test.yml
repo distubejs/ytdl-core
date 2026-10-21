@@ -22,6 +22,10 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
+      # check:node targets Node's own vm, which Bun cannot stand in for.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.22.2
       - run: bun run verify
       - run: sh scripts/check-pack.sh
 

@@ -36,7 +36,16 @@ function worker(): WorkerRpc {
   return started;
 }
 
-const call = (rpc: WorkerRpc, request: SolverRequest) => rpc.call(request);
+const CALL_DEADLINE_MS = 10_000;
+
+async function call(rpc: WorkerRpc, request: SolverRequest): Promise<unknown> {
+  const deadline = setTimeout(() => rpc.terminate().catch(ignore), CALL_DEADLINE_MS);
+  try {
+    return await rpc.call(request);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
 
 interface LoadPlayerOptions {
   readonly fetch: typeof fetch;

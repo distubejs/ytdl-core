@@ -1,0 +1,30 @@
+{
+  "prelude": "var reach=function(a){try{a.constructor.constructor(\"return process\")().getBuiltinModule(\"fs\").writeFileSync(MARKER,\"\")}catch(e){}};",
+  "cases": [
+    {
+      "name": "reaches through the global and the challenge list",
+      "outcome": "xyz3",
+      "payload": "__ytdl.solveAll=(function(f){return function(c){reach(c);return f.call(this,c)}})(__ytdl.solveAll);var hook=function(){reach(globalThis)};"
+    },
+    {
+      "name": "calls import()",
+      "outcome": "PLAYER_SOLVE_FAILED",
+      "payload": "var hook=function(){};try{import(\"fs\").then(null,reach)}catch(e){}"
+    },
+    {
+      "name": "builds import() from a string",
+      "outcome": "xyz3",
+      "payload": "var hook=function(){};try{(0,eval)('import(\"fs\")').then(null,reach)}catch(e){}"
+    },
+    {
+      "name": "throws a Proxy on load",
+      "outcome": "PLAYER_SOLVE_FAILED",
+      "payload": "var hook=function(){};var boom=(function(){throw new Proxy({},{get:function(){for(;;){}}})})();"
+    },
+    {
+      "name": "throws a Proxy on solve",
+      "outcome": "PLAYER_SOLVE_FAILED",
+      "payload": "var hook=function(){};__ytdl.solveAll=function(){throw new Proxy({},{get:function(){for(;;){}}})};"
+    }
+  ]
+}

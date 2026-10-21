@@ -43,7 +43,8 @@
     "test": "bun test ./tests",
     "test:live": "YTDL_LIVE=1 bun test ./tests/live --timeout 300000",
     "build": "rm -rf dist && tsrs -p tsconfig.build.json",
-    "verify": "bun run check && bun run type && bun run test && bun run build",
+    "check:node": "bun run build && node scripts/check-node.mjs",
+    "verify": "bun run check && bun run type && bun run test && bun run check:node",
     "prepack": "bun run build"
   },
   "dependencies": {
