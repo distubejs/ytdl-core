@@ -14,7 +14,7 @@ mock.module("node:worker_threads", () => ({ ...workerThreads, Worker: CountingWo
 const { createPoTokenProvider } = await import("../src/po-token/index.ts");
 type PoTokenProvider = Awaited<ReturnType<typeof createPoTokenProvider>>;
 
-const INTERPRETER = `
+const interpreter = (minted: string) => `
 globalThis.fakeBotGuard = {
   a(program, setup) {
     if (typeof document === "undefined" || location.origin !== "https://www.youtube.com") throw new Error("no DOM");
@@ -22,12 +22,14 @@ globalThis.fakeBotGuard = {
     document.createElement("canvas").getContext("2d");
     const text = (bytes) => new TextDecoder().decode(bytes);
     setup((done, [, , output]) => {
-      output.push(async (integrity) => async (binding) => new TextEncoder().encode(text(integrity) + "|" + text(binding)));
+      output.push(async (integrity) => async (binding) => new TextEncoder().encode(${minted}));
       done("bg-response");
     }, () => {}, () => {}, () => {});
     return [() => "sync"];
   },
 };`;
+const INTERPRETER = interpreter('text(integrity) + "|" + text(binding)');
+const USER_AGENT_INTERPRETER = interpreter('text(integrity) + "|" + navigator.userAgent');
 const CRASHING_INTERPRETER = `
 setTimeout(() => { throw new Error("boom"); });
 globalThis.fakeBotGuard = { a() { return []; } };`;
@@ -55,12 +57,16 @@ function fakeYouTube({
   interpreters?: string[];
 }) {
   const requests: string[] = [];
+  const homePageHeaders: Headers[] = [];
   let challenges = 0;
   let integrityTokens = 0;
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     requests.push(url);
-    if (url === "https://www.youtube.com/") return new Response(HOME_PAGE);
+    if (url === "https://www.youtube.com/") {
+      homePageHeaders.push(new Headers(init?.headers));
+      return new Response(HOME_PAGE);
+    }
     if (url === "https://www.google.com/js/th/fake.js") return new Response(interpreters[challenges++] ?? INTERPRETER);
     if (
       url === "https://www.youtube.com/api/jnn/v1/GenerateIT" &&
@@ -70,7 +76,7 @@ function fakeYouTube({
     }
     return new Response(null, { status: 400 });
   }) as typeof globalThis.fetch;
-  return { fetch, requests };
+  return { fetch, requests, homePageHeaders };
 }
 
 const providers: PoTokenProvider[] = [];
@@ -111,6 +117,17 @@ describe("createPoTokenProvider", () => {
     const provider = await provide(fakeYouTube({ ttl: 3600, threshold: 300 }));
     expect(decode(await provider(request()))).toBe("it-1|aqz-KE-bpKQ");
     expect(decode(await provider(request({ contentBinding: "visitor-data" })))).toBe("it-1|visitor-data");
+  });
+
+  test("fetches the home page as a consenting browser whose user agent BotGuard also sees", async () => {
+    const fake = fakeYouTube({ ttl: 3600, threshold: 300, interpreters: [USER_AGENT_INTERPRETER] });
+    const provider = await provide(fake);
+    const [headers] = fake.homePageHeaders;
+    const userAgent = headers?.get("user-agent") ?? "";
+
+    expect(userAgent).toStartWith("Mozilla/5.0 (");
+    expect(headers?.get("cookie")).toContain("SOCS=CAI");
+    expect(decode(await provider(request()))).toBe(`it-1|${userAgent}`);
   });
 
   test("minting writes nothing to standard output or standard error", async () => {

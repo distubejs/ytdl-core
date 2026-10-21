@@ -1,7 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import { BotGuardClient } from "bgutils-js/botguard";
 import type { WebPoSignalOutput } from "bgutils-js/shared-types";
-import { buildURL, getHeaders, parseLooseJSON } from "bgutils-js/utils";
+import { buildURL, getHeaders, parseLooseJSON, USER_AGENT } from "bgutils-js/utils";
 import { WebPoMinter } from "bgutils-js/webpo";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { at, str, ytcfg } from "../json.ts";
@@ -23,6 +23,8 @@ export type FetchRequest = {
 // YouTube web player's WAA request key.
 const REQUEST_KEY = "O43z0dpjhgX20SCx4KAo";
 const HOMEPAGE = "https://www.youtube.com/";
+// yt-dlp's accept-all consent cookie; without it EU hosts are redirected to consent.youtube.com.
+const CONSENT_COOKIE = "SOCS=CAI";
 
 if (!parentPort) throw new Error("po-token/worker runs only as a worker thread");
 const port = parentPort;
@@ -39,8 +41,9 @@ Object.assign(globalThis, {
   location: dom.window.location,
   origin: dom.window.origin,
 });
-if (!Reflect.has(globalThis, "navigator"))
-  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator });
+// jsdom sets its user agent only through `resources`, which also loads subresources outside the proxied fetch.
+Object.defineProperty(dom.window.Navigator.prototype, "userAgent", { get: () => USER_AGENT });
+Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 
 const fetches = new Map<number, { resolve(response: Response): void; reject(error: unknown): void }>();
 let nextFetchId = 0;
@@ -64,14 +67,14 @@ const proxiedFetch = ((url: string | URL, init?: RequestInit): Promise<Response>
   return new Promise((resolve, reject) => fetches.set(id, { resolve, reject }));
 }) as typeof fetch;
 
-async function fetchText(url: string, name: string): Promise<string> {
-  const response = await proxiedFetch(url);
+async function fetchText(url: string, name: string, headers: Record<string, string> = {}): Promise<string> {
+  const response = await proxiedFetch(url, { headers: { "User-Agent": USER_AGENT, ...headers } });
   if (!response.ok) throw new Error(`${name} answered ${response.status}`);
   return response.text();
 }
 
 async function createMinter(): Promise<{ minter: WebPoMinter; refreshAt: number }> {
-  const page = await fetchText(HOMEPAGE, "The YouTube home page");
+  const page = await fetchText(HOMEPAGE, "The YouTube home page", { Cookie: CONSENT_COOKIE });
   const config = ytcfg(page);
   const atN = /window\.ytAtN\((\{.*?\})\)/su.exec(page)?.[1];
   const challenge: unknown = atN === undefined ? undefined : at(parseLooseJSON(atN), "R", "bgChallenge");
