@@ -55,6 +55,37 @@ export interface ChooseFormatOptions {
   readonly format?: VideoFormat;
 }
 
+export interface ByteRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+export interface AudioTrack {
+  readonly id: string;
+  readonly displayName: string;
+  readonly audioIsDefault: boolean;
+}
+
+/** The caption track a timed-text format carries, such as a live stream's auto-generated captions. */
+export interface FormatCaptionTrack {
+  readonly id: string;
+  readonly displayName: string;
+  readonly vssId: string;
+  readonly languageCode: string;
+  /** `asr` for auto-generated captions. */
+  readonly kind?: string;
+}
+
+export interface ColorInfo {
+  readonly primaries?: string;
+  readonly transferCharacteristics?: string;
+  readonly matrixCoefficients?: string;
+}
+
+/**
+ * One format as YouTube lists it, under YouTube's field names, plus fields ytdl-core derives. A field YouTube
+ * omits is absent; numeric strings are numbers.
+ */
 export interface FormatMetadata {
   readonly itag: number;
   readonly mimeType: string;
@@ -63,26 +94,58 @@ export interface FormatMetadata {
   readonly codecs: string;
   readonly videoCodec: string | undefined;
   readonly audioCodec: string | undefined;
-  readonly bitrate: number | undefined;
   /** Kbps, for formats with audio. */
   readonly audioBitrate: number | undefined;
-  readonly audioSampleRate: number | undefined;
-  readonly audioChannels: number | undefined;
-  readonly width: number | undefined;
-  readonly height: number | undefined;
-  readonly fps: number | undefined;
-  readonly qualityLabel: string | undefined;
-  readonly contentLength: number | undefined;
-  readonly approxDurationMs: number | undefined;
-  readonly audioTrack: { readonly id: string; readonly name: string; readonly isDefault: boolean } | undefined;
-  /** Stable-volume (DRC) audio. It shares its itag with the original, so match formats with all three of itag, `isDrc` and `audioTrack`. */
+  /** Stable-volume (DRC) audio. It shares its itag with the original, so match formats with all three of itag, `isDrc` and `audioTrack.id`. */
   readonly isDrc: boolean;
   readonly hasAudio: boolean;
   readonly hasVideo: boolean;
   readonly isLive: boolean;
   readonly isHLS: boolean;
+  /** Encrypted; listed, but never chosen or opened. */
+  readonly isDrm: boolean;
+  /** Served as OTF segments, which ytdl-core cannot read; listed, but never chosen or opened. */
+  readonly isOtf: boolean;
   /** The client that served this format; resume asks it first. */
   readonly client: Client;
+  readonly bitrate?: number;
+  readonly averageBitrate?: number;
+  readonly width?: number;
+  readonly height?: number;
+  readonly fps?: number;
+  readonly quality?: string;
+  readonly qualityLabel?: string;
+  readonly qualityOrdinal?: string;
+  readonly audioQuality?: string;
+  readonly audioSampleRate?: number;
+  readonly audioChannels?: number;
+  readonly contentLength?: number;
+  readonly approxDurationMs?: number;
+  /** Microseconds since the epoch. */
+  readonly lastModified?: number;
+  /** Bytes of the container header. */
+  readonly initRange?: ByteRange;
+  /** Bytes of the container's seek index. */
+  readonly indexRange?: ByteRange;
+  /** Live segment length. */
+  readonly targetDurationSec?: number;
+  /** How far behind the live edge the stream can be read. */
+  readonly maxDvrDurationSec?: number;
+  readonly audioTrack?: AudioTrack;
+  readonly captionTrack?: FormatCaptionTrack;
+  readonly loudnessDb?: number;
+  readonly trackAbsoluteLoudnessLkfs?: number;
+  readonly isVb?: boolean;
+  readonly appliedDrcTargetCenterForBackgroundDb?: number;
+  readonly appliedVocalsGainFactor?: number;
+  readonly vocalsBackgroundLoudnessDifferenceDb?: number;
+  readonly colorInfo?: ColorInfo;
+  readonly projectionType?: string;
+  readonly xtags?: string;
+  readonly highReplication?: boolean;
+  readonly drmFamilies?: readonly string[];
+  /** `FORMAT_STREAM_TYPE_OTF` for an OTF format. */
+  readonly type?: string;
 }
 
 export interface VideoFormat extends FormatMetadata {
@@ -131,6 +194,52 @@ function splitCodecs(mimeType: string): { container: string; codecs: string; lis
 
 export const AUDIO_CODEC = /^(?:mp4a|opus|vorbis|ac-3|ec-3|flac|mp3)/u;
 
+const bool = (value: unknown): boolean | undefined => (typeof value === "boolean" ? value : undefined);
+
+function range(value: unknown): ByteRange | undefined {
+  const start = num(at(value, "start"));
+  const end = num(at(value, "end"));
+  return start === undefined || end === undefined ? undefined : { start, end };
+}
+
+function audioTrack(value: unknown): AudioTrack | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    id: str(value.id) ?? "",
+    displayName: str(value.displayName) ?? "",
+    audioIsDefault: value.audioIsDefault === true,
+  };
+}
+
+function captionTrack(value: unknown): FormatCaptionTrack | undefined {
+  if (!isRecord(value)) return undefined;
+  return defined({
+    id: str(value.id) ?? "",
+    displayName: str(value.displayName) ?? "",
+    vssId: str(value.vssId) ?? "",
+    languageCode: str(value.languageCode) ?? "",
+    kind: str(value.kind),
+  });
+}
+
+function colorInfo(value: unknown): ColorInfo | undefined {
+  if (!isRecord(value)) return undefined;
+  return defined({
+    primaries: str(value.primaries),
+    transferCharacteristics: str(value.transferCharacteristics),
+    matrixCoefficients: str(value.matrixCoefficients),
+  });
+}
+
+function strings(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+// Optional fields YouTube omits stay absent instead of holding `undefined`.
+function defined<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as T;
+}
+
 export function parseFormat(entry: Json, client: Client, isLive = false): RawFormat | undefined {
   const itag = num(entry.itag);
   const mimeType = str(entry.mimeType);
@@ -141,18 +250,18 @@ export function parseFormat(entry: Json, client: Client, isLive = false): RawFor
   const videoCodec = isVideoType ? list.find((codec) => !AUDIO_CODEC.test(codec)) : undefined;
   const hasAudio = mimeType.startsWith("audio/") || audioCodec !== undefined;
   const bitrate = num(entry.averageBitrate) ?? num(entry.bitrate);
-  const track = at(entry, "audioTrack");
+  const drmFamilies = strings(entry.drmFamilies);
+  const type = str(entry.type);
   return {
     url: str(entry.url),
     signatureCipher: str(entry.signatureCipher),
-    metadata: {
+    metadata: defined<FormatMetadata>({
       itag,
       mimeType,
       container,
       codecs,
       videoCodec,
       audioCodec,
-      bitrate: num(entry.bitrate),
       audioBitrate: !hasAudio
         ? undefined
         : isVideoType
@@ -160,24 +269,47 @@ export function parseFormat(entry: Json, client: Client, isLive = false): RawFor
           : bitrate === undefined
             ? undefined
             : Math.round(bitrate / 1000),
-      audioSampleRate: num(entry.audioSampleRate),
-      audioChannels: num(entry.audioChannels),
-      width: num(entry.width),
-      height: num(entry.height),
-      fps: num(entry.fps),
-      qualityLabel: str(entry.qualityLabel),
-      contentLength: num(entry.contentLength),
-      approxDurationMs: num(entry.approxDurationMs),
-      audioTrack: isRecord(track)
-        ? { id: str(track.id) ?? "", name: str(track.displayName) ?? "", isDefault: track.audioIsDefault === true }
-        : undefined,
       isDrc: entry.isDrc === true,
       hasAudio,
       hasVideo: isVideoType,
       isLive,
       isHLS: false,
+      isDrm: drmFamilies !== undefined && drmFamilies.length > 0,
+      isOtf: type === "FORMAT_STREAM_TYPE_OTF",
       client,
-    },
+      bitrate: num(entry.bitrate),
+      averageBitrate: num(entry.averageBitrate),
+      width: num(entry.width),
+      height: num(entry.height),
+      fps: num(entry.fps),
+      quality: str(entry.quality),
+      qualityLabel: str(entry.qualityLabel),
+      qualityOrdinal: str(entry.qualityOrdinal),
+      audioQuality: str(entry.audioQuality),
+      audioSampleRate: num(entry.audioSampleRate),
+      audioChannels: num(entry.audioChannels),
+      contentLength: num(entry.contentLength),
+      approxDurationMs: num(entry.approxDurationMs),
+      lastModified: num(entry.lastModified),
+      initRange: range(entry.initRange),
+      indexRange: range(entry.indexRange),
+      targetDurationSec: num(entry.targetDurationSec),
+      maxDvrDurationSec: num(entry.maxDvrDurationSec),
+      audioTrack: audioTrack(entry.audioTrack),
+      captionTrack: captionTrack(entry.captionTrack),
+      loudnessDb: num(entry.loudnessDb),
+      trackAbsoluteLoudnessLkfs: num(entry.trackAbsoluteLoudnessLkfs),
+      isVb: bool(entry.isVb),
+      appliedDrcTargetCenterForBackgroundDb: num(entry.appliedDrcTargetCenterForBackgroundDb),
+      appliedVocalsGainFactor: num(entry.appliedVocalsGainFactor),
+      vocalsBackgroundLoudnessDifferenceDb: num(entry.vocalsBackgroundLoudnessDifferenceDb),
+      colorInfo: colorInfo(entry.colorInfo),
+      projectionType: str(entry.projectionType),
+      xtags: str(entry.xtags),
+      highReplication: bool(entry.highReplication),
+      drmFamilies,
+      type,
+    }),
   };
 }
 
@@ -204,8 +336,6 @@ export function parseFormats(player: Json, client: Client): RawFormat[] {
   const out: RawFormat[] = [];
   for (const { entry, isAdaptive } of entries) {
     if (!isRecord(entry)) continue;
-    if (Array.isArray(entry.drmFamilies) && entry.drmFamilies.length > 0) continue;
-    if (entry.type === "FORMAT_STREAM_TYPE_OTF") continue;
     const parsed = parseFormat(entry, client, isLive);
     if (parsed && (parsed.url || parsed.signatureCipher || (sabr && isAdaptive))) out.push(parsed);
   }
@@ -294,6 +424,16 @@ function matchers(filter: Filter | undefined): Matcher[] {
   return filter.map(matcher);
 }
 
+export function isPlayable(format: FormatMetadata): boolean {
+  return !format.isDrm && !format.isOtf;
+}
+
+export function checkPlayable(format: FormatMetadata): void {
+  if (!isPlayable(format)) {
+    throw new YtdlError("NO_FORMAT", `itag ${format.itag} is ${format.isDrm ? "DRM-protected" : "OTF"}`);
+  }
+}
+
 // YouTube gives DRC variants and dubbed tracks the itag of the original.
 export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
   return a.itag === b.itag && a.isDrc === b.isDrc && a.audioTrack?.id === b.audioTrack?.id;
@@ -306,10 +446,12 @@ export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
  */
 export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
   const wanted = options.format;
+  if (wanted) checkPlayable(wanted);
   if (wanted) return formats.find((format) => sameFormat(format, wanted)) ?? wanted;
+  const playable = formats.filter(isPlayable);
   const quality = options.quality ?? "highest";
   for (const matches of matchers(options.filter)) {
-    const matching = formats.filter(matches);
+    const matching = playable.filter(matches);
     const originals = matching.filter((format) => !format.isDrc);
     const chosen = pick(originals.length > 0 ? originals : matching, quality);
     if (chosen) return chosen;

@@ -3,6 +3,7 @@ import type { CookieAuth } from "./auth.ts";
 import { type AttemptRecord, YtdlError, type YtdlErrorCode, type YtdlErrorDetails } from "./errors.ts";
 import {
   type FormatMetadata,
+  isPlayable,
   parseFormats,
   type SabrSource,
   sabrSession,
@@ -237,7 +238,7 @@ export class Resolver {
     const isLive = at(response, "videoDetails", "isLive") === true;
     const hls = str(at(response, "streamingData", "hlsManifestUrl"));
     const raw = parseFormats(response, rung.client);
-    if (raw.length === 0 && !(isLive && hls)) {
+    if (!raw.some((format) => isPlayable(format.metadata)) && !(isLive && hls)) {
       return { code: "NO_FORMAT", reason: `${client.name} returned no downloadable format` };
     }
     const wanted = options.format;

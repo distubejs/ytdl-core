@@ -64,6 +64,10 @@ yt.download(info, { format, onProgress: ({ chunkBytes, downloaded, total }) => {
 
 To read the same format again later, for example to seek, keep a [`Media`](../download/#read-one-format-many-times) from `yt.open(info, format)` instead of the info. `stream.destroy()` still stops a download, and `signal` cancels one with an `AbortController`.
 
+## Formats
+
+A format keeps the field names 4.x copied from YouTube, such as `itag`, `mimeType`, `bitrate`, `initRange`, `audioQuality` and `audioTrack`, with numeric strings parsed to numbers. Two differ: `url` is already solved, and `signatureCipher` is gone. ytdl-core's own additions are listed in [Choose a format](../formats/#what-a-format-carries). DRM and OTF formats are listed with `isDrm` and `isOtf`, and `chooseFormat` skips them.
+
 ## Errors
 
 Failures are `YtdlError` values with a `code`, such as `PRIVATE`, `AGE_RESTRICTED` or `NO_FORMAT`, instead of messages to match. See [Errors](../errors/).

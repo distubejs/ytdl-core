@@ -125,6 +125,18 @@ describe("chooseFormat", () => {
   });
 });
 
+describe("unplayable formats", () => {
+  test("a DRM format is never chosen, even when passed as the format", () => {
+    const plain = audio(140, "mp4", "mp4a.40.2", 128);
+    const drm: VideoFormat = { ...audio(141, "mp4", "mp4a.40.2", 256), isDrm: true };
+    const otf: VideoFormat = { ...audio(142, "mp4", "mp4a.40.2", 192), isOtf: true };
+
+    expect(chooseFormat([drm, otf, plain], { quality: Quality.HighestAudio }).itag).toBe(140);
+    expect(errorCode({ format: drm }, [drm, otf, plain])).toBe("NO_FORMAT");
+    expect(errorCode({ format: otf }, [drm, otf, plain])).toBe("NO_FORMAT");
+  });
+});
+
 describe("stable-volume variants", () => {
   // YouTube lists a DRC copy under the same itag, with its own size.
   const originalOf = (copy: VideoFormat) =>

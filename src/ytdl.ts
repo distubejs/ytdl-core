@@ -3,7 +3,7 @@ import { CookieAuth } from "./auth.ts";
 import { CLIENTS, DEFAULT_CLIENTS, userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { deliver, type Delivery, Media, type Playback, type ResumeRequest } from "./delivery/index.ts";
-import { chooseFormat, sameFormat } from "./formats.ts";
+import { checkPlayable, chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import { browsePlaylist, checkLimit, checkQuery, fetchSuggestions, relatedVideos, searchVideos } from "./discovery.ts";
@@ -138,6 +138,7 @@ export class Ytdl {
   open(info: VideoInfo, format: VideoFormat): Media {
     const own = info.formats.find((candidate) => sameFormat(candidate, format));
     if (!own) throw new YtdlError("NO_FORMAT", `itag ${format.itag} is not a format of ${info.videoDetails.id}`);
+    checkPlayable(own);
     return new Media(this.#delivery, info, own);
   }
 

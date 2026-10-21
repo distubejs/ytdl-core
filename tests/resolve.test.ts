@@ -312,6 +312,20 @@ describe("resume", () => {
 });
 
 describe("outcomes", () => {
+  test("a client that answers only DRM formats falls through to the next", async () => {
+    const yt = fakeYouTube({
+      player: ({ client }) =>
+        client === VISIONOS ? playable(ID, [audioFormat(251, { drmFamilies: ["WIDEVINE"] })]) : ciphered(ID),
+    });
+    const info = await new Ytdl({
+      fetch: yt.fetch,
+      playerId: PLAYER_ID,
+      clients: [Client.VisionOS, Client.Tv],
+    }).getInfo(ID);
+    expect(info.client).toBe("tv");
+    expect(info.formats.map(({ itag, isDrm }) => ({ itag, isDrm }))).toEqual([{ itag: 251, isDrm: false }]);
+  });
+
   test("an answer for another video is discarded", async () => {
     const yt = fakeYouTube({ player: ({ client }) => (client === VISIONOS ? playable("otherVideo1") : ciphered(ID)) });
     const info = await new Ytdl({

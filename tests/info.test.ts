@@ -98,7 +98,7 @@ describe("getInfo details", () => {
 });
 
 describe("getInfo", () => {
-  test("leaves out DRM, OTF and URL-less formats", async () => {
+  test("lists DRM and OTF formats flagged, and leaves out URL-less ones", async () => {
     const yt = fakeYouTube({
       player: () =>
         playable(ID, [
@@ -109,8 +109,84 @@ describe("getInfo", () => {
         ]),
     });
     const info = await new Ytdl({ fetch: yt.fetch }).getInfo(ID);
-    expect(info.formats.map((format) => format.itag)).toEqual([251]);
+    expect(info.formats.map(({ itag, isDrm, isOtf }) => ({ itag, isDrm, isOtf }))).toEqual([
+      { itag: 251, isDrm: false, isOtf: false },
+      { itag: 140, isDrm: true, isOtf: false },
+      { itag: 250, isDrm: false, isOtf: true },
+    ]);
+    expect(info.formats[1]?.drmFamilies).toEqual(["WIDEVINE"]);
     expect(info.expiresAt).toBe(4_102_444_800_000);
+  });
+
+  test("a live caption track keeps its captionTrack and has no audio or video", async () => {
+    const captions = {
+      ...audioFormat(386, { mimeType: 'text/mp4; codecs="unknown"', contentLength: undefined, bitrate: undefined }),
+      captionTrack: {
+        displayName: "English (auto-generated)",
+        vssId: "a.en",
+        languageCode: "en",
+        kind: "asr",
+        id: "asr.en",
+      },
+      targetDurationSec: 5,
+      maxDvrDurationSec: 43200,
+    };
+    const live = { ...playable(ID, [audioFormat(140), captions]), videoDetails: { videoId: ID, isLive: true } };
+    const info = await new Ytdl({ fetch: fakeYouTube({ player: () => live }).fetch }).getInfo(ID);
+    const track = info.formats.find((format) => format.itag === 386);
+
+    expect(track).toMatchObject({
+      captionTrack: { kind: "asr", languageCode: "en", displayName: "English (auto-generated)" },
+      targetDurationSec: 5,
+      maxDvrDurationSec: 43200,
+      hasAudio: false,
+      hasVideo: false,
+    });
+  });
+
+  test("a format keeps YouTube's byte layout, loudness and quality fields with numbers parsed", async () => {
+    const entry = audioFormat(251, {
+      initRange: { start: "0", end: "258" },
+      indexRange: { start: "259", end: "1022" },
+      lastModified: "1729213425893470",
+      averageBitrate: 129_000,
+      loudnessDb: -3.25,
+      trackAbsoluteLoudnessLkfs: -17.25,
+      quality: "tiny",
+      qualityOrdinal: "QUALITY_ORDINAL_UNKNOWN",
+      audioQuality: "AUDIO_QUALITY_MEDIUM",
+      audioSampleRate: "48000",
+      audioTrack: { displayName: "German", id: "de.3", audioIsDefault: false },
+      projectionType: "RECTANGULAR",
+      highReplication: true,
+      xtags: "CgcKAmxhEgFl",
+    });
+    const info = await new Ytdl({ fetch: fakeYouTube({ player: () => playable(ID, [entry]) }).fetch }).getInfo(ID);
+
+    expect(info.formats[0]).toMatchObject({
+      initRange: { start: 0, end: 258 },
+      indexRange: { start: 259, end: 1022 },
+      lastModified: 1_729_213_425_893_470,
+      averageBitrate: 129_000,
+      loudnessDb: -3.25,
+      trackAbsoluteLoudnessLkfs: -17.25,
+      quality: "tiny",
+      qualityOrdinal: "QUALITY_ORDINAL_UNKNOWN",
+      audioQuality: "AUDIO_QUALITY_MEDIUM",
+      audioSampleRate: 48_000,
+      audioTrack: { displayName: "German", id: "de.3", audioIsDefault: false },
+      projectionType: "RECTANGULAR",
+      highReplication: true,
+      xtags: "CgcKAmxhEgFl",
+    });
+    expect(info.formats[0]).not.toHaveProperty("signatureCipher");
+  });
+
+  test("a field YouTube omits is absent from the format", async () => {
+    const info = await new Ytdl({ fetch: fakeYouTube({ player: () => playable(ID) }).fetch }).getInfo(ID);
+    for (const field of ["colorInfo", "captionTrack", "width", "fps", "audioTrack"]) {
+      expect(info.formats[0]).not.toHaveProperty(field);
+    }
   });
 
   test("playableAt waits out a preroll sent as an ad placement or as a sequential ad slot", async () => {

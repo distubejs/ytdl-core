@@ -57,5 +57,30 @@ const format = chooseFormat(info.formats, {
 Some videos have stable-volume copies (`isDrc`) that share their itag with the original, and dubbed tracks (`audioTrack`). `chooseFormat` prefers the original. To get a specific track, filter on it:
 
 ```ts
-yt.download(info, { filter: (format) => format.audioTrack?.isDefault === true && !format.isDrc });
+yt.download(info, { filter: (format) => format.audioTrack?.audioIsDefault === true && !format.isDrc });
 ```
+
+## What a format carries
+
+A format has YouTube's own fields under YouTube's names. A field YouTube leaves out is absent, and numeric strings are numbers:
+
+- `quality`, `qualityLabel`, `qualityOrdinal`, `audioQuality`, `bitrate` and `averageBitrate`
+- `width`, `height`, `fps`, `colorInfo` and `projectionType`
+- `audioSampleRate`, `audioChannels`, `loudnessDb` and `trackAbsoluteLoudnessLkfs`
+- `contentLength`, `approxDurationMs` and `lastModified` (microseconds)
+- `initRange` and `indexRange`, the byte ranges of the container header and seek index
+- `audioTrack` and `captionTrack`
+- `targetDurationSec` and `maxDvrDurationSec` on live formats
+
+ytdl-core adds `container`, `codecs`, `audioCodec`, `videoCodec`, `audioBitrate` in kbps, `hasAudio`, `hasVideo`, `isLive`, `isHLS`, `isDrm`, `isOtf` and `client`. `url` is ready to request after signature solving. Every field is listed in [`VideoFormat`](../../api/interfaces/videoformat/).
+
+A live stream can list its auto-generated captions as a format with neither audio nor video:
+
+```ts
+const captions = live.formats.find((format) => format.captionTrack?.kind === "asr");
+captions?.captionTrack?.languageCode; // "en"
+```
+
+## Formats that can't be downloaded
+
+DRM-protected formats (`isDrm`, with their `drmFamilies`) and OTF formats (`isOtf`) are listed so you can see them. `chooseFormat` never picks one, and `open` or `download` with one throws `NO_FORMAT`. If you walk `info.formats` yourself, skip them.

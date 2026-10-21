@@ -138,6 +138,14 @@ describe("SABR delivery", () => {
     expect(() => ytdl.open(info, foreign)).toThrow(expect.objectContaining({ code: "NO_FORMAT" }));
   });
 
+  test("opening a DRM format throws NO_FORMAT", async () => {
+    const { ytdl } = setup();
+    const info = await ytdl.getInfo(ID);
+    const drm = { ...info.formats[0]!, isDrm: true };
+
+    expect(() => ytdl.open({ ...info, formats: [drm] }, drm)).toThrow(expect.objectContaining({ code: "NO_FORMAT" }));
+  });
+
   test("an opened format reads twice through one SABR session lookup", async () => {
     const { yt, ytdl } = setup();
     const info = await ytdl.getInfo(ID);
