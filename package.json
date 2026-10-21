@@ -9,6 +9,10 @@
     "video",
     "youtube"
   ],
+  "homepage": "https://distube.js.org/ytdl-core/",
+  "bugs": {
+    "url": "https://github.com/distubejs/ytdl-core/issues"
+  },
   "license": "MIT",
   "author": "Skick (https://github.com/skick1234)",
   "contributors": [
@@ -34,7 +38,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "check": "oxlint --deny-warnings && oxfmt --check",

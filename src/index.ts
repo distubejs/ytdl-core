@@ -5,7 +5,17 @@
 export { Ytdl } from "./ytdl.ts";
 export type { ListOptions, LookupOptions, YtdlOptions } from "./ytdl.ts";
 export { chooseFormat, Quality } from "./formats.ts";
-export type { ChooseFormatOptions, Filter, FormatCriteria, FormatMetadata, VideoFormat } from "./formats.ts";
+export type {
+  AudioTrack,
+  ByteRange,
+  ChooseFormatOptions,
+  ColorInfo,
+  Filter,
+  FormatCaptionTrack,
+  FormatCriteria,
+  FormatMetadata,
+  VideoFormat,
+} from "./formats.ts";
 export type { Author, Chapter, Storyboard, Thumbnail, VideoDetails, VideoInfo } from "./info.ts";
 export { CaptionFormat } from "./captions.ts";
 export type { CaptionOptions, CaptionTrack } from "./captions.ts";
