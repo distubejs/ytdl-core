@@ -7,6 +7,7 @@ import type { VideoFormat } from "../formats.ts";
 import type { VideoInfo } from "../info.ts";
 
 const MAX_RESUMES_WITHOUT_PROGRESS = 3;
+export const LIVE_IDLE_MS = 30_000;
 
 export async function waitUntil(time: number, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();

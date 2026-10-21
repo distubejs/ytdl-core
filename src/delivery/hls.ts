@@ -3,7 +3,7 @@ import { AUDIO_CODEC, MUXED_AUDIO_KBPS } from "../formats.ts";
 import { num } from "../json.ts";
 import type { VideoFormat } from "../formats.ts";
 import { YtdlError } from "../errors.ts";
-import { waitUntil, type Session } from "./session.ts";
+import { LIVE_IDLE_MS, waitUntil, type Session } from "./session.ts";
 
 export function parseHlsMaster(playlist: string, base: string, client: Client): VideoFormat[] {
   const lines = playlist.split(/\r?\n/u);
@@ -103,6 +103,7 @@ export async function* readLive(
   signal: AbortSignal,
 ): AsyncGenerator<Uint8Array, void, undefined> {
   let next: number | undefined;
+  let freshAt = Date.now();
   poll: for (;;) {
     const polledAt = Date.now();
     const url = session.format.url ?? "";
@@ -126,8 +127,9 @@ export async function* readLive(
       }
       next = segment.sequence + 1;
       fresh = true;
+      freshAt = Date.now();
     }
-    if (playlist.ended) return;
+    if (playlist.ended || Date.now() - freshAt >= LIVE_IDLE_MS) return;
     // RFC 8216 6.3.4: reload after a target duration, or half of one when nothing was new.
     await waitUntil(polledAt + (fresh ? 1000 : 500) * playlist.targetDuration, signal);
   }

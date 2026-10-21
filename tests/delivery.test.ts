@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import type { Readable } from "node:stream";
 import { deliver, Media } from "../src/delivery/index.ts";
 import { YtdlError } from "../src/errors.ts";
@@ -120,6 +120,37 @@ async function collectNode(stream: Readable): Promise<{ data: Uint8Array; errors
   return { data: new Uint8Array(Buffer.concat(parts)), errors };
 }
 
+// Bun's fake timers also fake setImmediate and Bun.sleep; a MessageChannel message is still a real macrotask.
+function nextMacrotask(): Promise<void> {
+  const { port1, port2 } = new MessageChannel();
+  const received = new Promise<void>((resolve) => {
+    port1.addEventListener("message", () => resolve(), { once: true });
+  });
+  port1.start();
+  port2.postMessage(undefined);
+  return received.finally(() => port1.close());
+}
+
+/** Collects a live read under fake timers, firing the next timer whenever the read waits on one. */
+async function collectLive(input: Input): Promise<{ data: Uint8Array; errors: unknown[] }> {
+  jest.useFakeTimers();
+  try {
+    const stream = nodeStream(input);
+    const collected = collectNode(stream);
+    const ended = collected.then(() => true);
+    for (let turn = 0; !(await Promise.race([ended, nextMacrotask().then(() => false)])); turn++) {
+      if (turn > 100_000) {
+        stream.destroy();
+        throw new Error("the live read neither ends nor waits on a timer");
+      }
+      if (jest.getTimerCount() > 0) jest.advanceTimersToNextTimer();
+    }
+    return await collected;
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 function forbidden(): Response {
   return new Response(null, { status: 403 });
 }
@@ -151,8 +182,8 @@ function failingAt(start: number, answer: () => Response, resume?: Delivery["res
   return setup({ fetch: server.fetch, options: { chunkSize: 1000 }, resume });
 }
 
-function playlist(first: number, last: number, ended = false): string {
-  const lines = ["#EXTM3U", "#EXT-X-TARGETDURATION:0.01", `#EXT-X-MEDIA-SEQUENCE:${first}`];
+function playlist(first: number, last: number, ended = false, targetDuration = 0.01): string {
+  const lines = ["#EXTM3U", `#EXT-X-TARGETDURATION:${targetDuration}`, `#EXT-X-MEDIA-SEQUENCE:${first}`];
   for (let sequence = first; sequence <= last; sequence++) lines.push("#EXTINF:1.0,", `seg/${sequence}.ts`);
   if (ended) lines.push("#EXT-X-ENDLIST");
   return lines.join("\n");
@@ -578,6 +609,41 @@ describe("live delivery", () => {
     expect(new TextDecoder().decode(data)).toBe("13,14,15,16,17,18,19,");
     expect(polls).toBe(3);
   });
+
+  test("a playlist with a 1 s target duration that stops growing without ENDLIST ends 30 s after its last new segment", async () => {
+    const playlists = [playlist(10, 15, false, 1), playlist(13, 18, false, 1)];
+    let polls = 0;
+    const server = mediaServer(new Uint8Array(), ({ url }) => {
+      if (url.pathname.endsWith(".m3u8")) return new Response(playlists[Math.min(polls++, playlists.length - 1)]);
+      return new Response(`${/\/seg\/(\d+)\.ts$/u.exec(url.pathname)?.[1]},`);
+    });
+    const { input } = setup({ fetch: server.fetch, format: hlsFormat(), options: { liveBuffer: 3000 } });
+
+    const { data, errors } = await collectLive(input);
+    const lastSegment = server.requests.findLast(({ url }) => url.pathname.endsWith("/seg/18.ts"))!;
+    const lastPoll = server.requests.at(-1)!;
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("13,14,15,16,17,18,");
+    expect(lastPoll.at - lastSegment.at).toBeGreaterThanOrEqual(30_000);
+    expect(lastPoll.at - lastSegment.at).toBeLessThan(31_000);
+  });
+
+  test("a playlist that stalls for less than 30 s keeps streaming the segments that follow", async () => {
+    let startedAt: number | undefined;
+    const server = mediaServer(new Uint8Array(), ({ url }) => {
+      const elapsed = Date.now() - (startedAt ??= Date.now());
+      if (!url.pathname.endsWith(".m3u8")) return new Response(`${/\/seg\/(\d+)\.ts$/u.exec(url.pathname)?.[1]},`);
+      if (elapsed === 0) return new Response(playlist(10, 15, false, 1));
+      return new Response(elapsed < 25_000 ? playlist(13, 18, false, 1) : playlist(16, 21, true, 1));
+    });
+    const { input } = setup({ fetch: server.fetch, format: hlsFormat(), options: { liveBuffer: 3000 } });
+
+    const { data, errors } = await collectLive(input);
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("13,14,15,16,17,18,19,20,21,");
+  });
 });
 
 /** A live DASH origin: segments 10 ms long; `sq=head+1` waits for the next segment until `last`. */
@@ -598,6 +664,10 @@ function dashOrigin({
   return { state, server };
 }
 
+function hlsFormat(): VideoFormat {
+  return format(1, { isHLS: true, contentLength: undefined, url: "https://media.test/live/index.m3u8?gen=1" });
+}
+
 function dashSetup(fetch: typeof globalThis.fetch) {
   return setup({
     fetch,
@@ -611,9 +681,28 @@ function dashSetup(fetch: typeof globalThis.fetch) {
 }
 
 describe("live DASH delivery", () => {
-  test("starts liveBuffer behind the head and ends once the stream stops growing", async () => {
+  test("starts liveBuffer behind the head and ends 30 s after the stream stops growing", async () => {
     const { server } = dashOrigin();
-    const { data, errors } = await collectNode(nodeStream(dashSetup(server.fetch).input));
+    const { data, errors } = await collectLive(dashSetup(server.fetch).input);
+    const lastSegment = server.requests.find(({ url }) => url.searchParams.get("sq") === "23")!;
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
+    expect(server.requests.at(-1)!.at - lastSegment.at).toBeGreaterThanOrEqual(30_000);
+    expect(server.requests.at(-1)!.at - lastSegment.at).toBeLessThan(31_000);
+  });
+
+  test("a stall shorter than 30 s keeps polling and emits the segments that follow", async () => {
+    const { server } = dashOrigin();
+    let startedAt: number | undefined;
+    const stalling = (async (input: string | URL | Request, init?: RequestInit) => {
+      const elapsed = Date.now() - (startedAt ??= Date.now());
+      if (new URL(String(input)).searchParams.get("sq") === "21" && elapsed < 25_000) {
+        return new Response(null, { status: 404, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } });
+      }
+      return server.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    const { data, errors } = await collectLive(dashSetup(stalling).input);
 
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
@@ -632,7 +721,7 @@ describe("live DASH delivery", () => {
       answer: (sq) => (sq === 19 && !failed ? ((failed = true), failure()) : undefined),
     });
     const { input, resumes } = dashSetup(server.fetch);
-    const { data, errors } = await collectNode(nodeStream(input));
+    const { data, errors } = await collectLive(input);
 
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
@@ -640,16 +729,19 @@ describe("live DASH delivery", () => {
     expect(server.requests.filter((request) => request.url.searchParams.get("sq") === "20")[0]?.generation).toBe(2);
   });
 
-  test("a 204 past the head counts as an idle poll and skips no segment", async () => {
+  test.each([
+    ["naming the head", { "x-head-seqnum": "20", "x-head-time-millis": "200" }],
+    ["naming no head", {}],
+  ])("a 204 past the head %s counts as an idle poll and skips no segment", async (_, headers) => {
     const { server } = dashOrigin({ last: 21 });
     let empty = 0;
     const holding = (async (input: string | URL | Request, init?: RequestInit) => {
       if (new URL(String(input)).searchParams.get("sq") === "21" && empty++ < 2) {
-        return new Response(null, { status: 204, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } });
+        return new Response(null, { status: 204, headers });
       }
       return server.fetch(input, init);
     }) as typeof globalThis.fetch;
-    const { data, errors } = await collectNode(nodeStream(dashSetup(holding).input));
+    const { data, errors } = await collectLive(dashSetup(holding).input);
 
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,");
@@ -665,7 +757,7 @@ describe("live DASH delivery", () => {
       },
       last: 40,
     });
-    const { data, errors } = await collectNode(nodeStream(dashSetup(server.fetch).input));
+    const { data, errors } = await collectLive(dashSetup(server.fetch).input);
 
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("17,18,40,");
@@ -675,7 +767,7 @@ describe("live DASH delivery", () => {
     expect(skipped).toEqual([]);
   });
 
-  test("a 404 at the head counts as an idle poll and ends the stream", async () => {
+  test("a 404 at the head ends the stream 30 s after the last new segment, polling once per segment duration", async () => {
     const { server } = dashOrigin({
       last: 20,
       answer: (sq) =>
@@ -683,22 +775,14 @@ describe("live DASH delivery", () => {
           ? new Response(null, { status: 404, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } })
           : undefined,
     });
-    const slow = (async (input: string | URL | Request, init?: RequestInit) => {
-      await Bun.sleep(1);
-      return server.fetch(input, init);
-    }) as typeof globalThis.fetch;
-    const stream = nodeStream(dashSetup(slow).input);
-    const collected = collectNode(stream);
-    const ended = await Promise.race([collected.then(() => true), Bun.sleep(1000).then(() => false)]);
-    if (!ended) stream.destroy();
-    const { data, errors } = await collected;
+    const { data, errors } = await collectLive(dashSetup(server.fetch).input);
+    const lastSegment = server.requests.find(({ url }) => url.searchParams.get("sq") === "19")!;
+    const idle = server.requests.filter(({ url }) => url.searchParams.get("sq") === "20").map((request) => request.at);
 
-    expect(ended).toBe(true);
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("17,18,19,");
-    expect(server.requests.filter((request) => request.url.searchParams.get("sq") === "20").length).toBeLessThanOrEqual(
-      4,
-    );
+    expect(idle.at(-1)! - lastSegment.at).toBeGreaterThanOrEqual(30_000);
+    expect(idle.slice(1).every((at, index) => at - idle[index]! >= 10)).toBe(true);
   });
 
   test("destroying while waiting for the next segment requests nothing more", async () => {
