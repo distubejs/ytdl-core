@@ -4,6 +4,7 @@ import {
   Client,
   chooseFormat,
   createPoTokenProvider,
+  type GetPoToken,
   type Filter,
   type Media,
   Quality,
@@ -15,6 +16,7 @@ const LIVE = process.env.YTDL_LIVE === "1";
 const COOKIE = process.env.YTDL_COOKIE;
 const HOST = process.env.YTDL_HOST ?? "unlabelled";
 const TIMEOUT = 300_000;
+const LIVE_MS = 3 * 60_000;
 
 const VIDEOS = {
   normal: "aqz-KE-bpKQ", // Big Buck Bunny, Blender, CC BY 3.0
@@ -60,6 +62,11 @@ async function plays(label: string, yt: Ytdl, id: string, offsets: readonly numb
   }
   rows.push(`  ${label} ${id}: ${info.client}, itag ${format.itag}, offsets ${offsets.join(", ")}`);
   return info;
+}
+
+async function longOffsets(yt: Ytdl): Promise<number[]> {
+  const info = await yt.getInfo(VIDEOS.long);
+  return [0, 70 / info.videoDetails.lengthSeconds];
 }
 
 describe.skipIf(!LIVE)("real YouTube", () => {
@@ -179,7 +186,7 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     await new Promise<void>((resolve, reject) => {
       stream.on("data", (chunk: Uint8Array) => {
         bytes += chunk.length;
-        if (Date.now() - started >= 30_000) {
+        if (Date.now() - started >= LIVE_MS) {
           controller.abort();
           resolve();
         }
@@ -189,15 +196,15 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     });
     expect(bytes).toBeGreaterThan(0);
     rows.push(
-      `  ${label} ${VIDEOS.live}: ${info.client}, itag ${format.itag} at ${format.bitrate} bps, ${bytes} bytes in 30 s`,
+      `  ${label} ${VIDEOS.live}: ${info.client}, itag ${format.itag} at ${format.bitrate} bps, ${bytes} bytes in ${LIVE_MS / 1000} s`,
     );
   }
 
-  test("live stream over HLS, 30 s of segments", () => streams("live hls", (format) => format.isHLS), TIMEOUT);
+  test("live stream over HLS, 3 minutes of segments", () => streams("live hls", (format) => format.isHLS), 2 * TIMEOUT);
   test(
-    "live stream over DASH, 30 s of segments",
+    "live stream over DASH, 3 minutes of segments",
     () => streams("live dash", { isLive: true, hasAudio: true, hasVideo: false }),
-    TIMEOUT,
+    2 * TIMEOUT,
   );
 
   test.each([Client.VisionOS, Client.WebEmbedded, Client.Tv])(
@@ -215,7 +222,7 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       const getPoToken = await createPoTokenProvider();
       try {
         const signedIn = new Ytdl({ cookie: COOKIE, clients: [Client.WebCreator], getPoToken });
-        const info = await plays("web_creator+cookie", signedIn, VIDEOS.normal);
+        const info = await plays("web_creator+cookie", signedIn, VIDEOS.long, await longOffsets(signedIn));
         expect(info.client).toBe("web_creator");
       } finally {
         await getPoToken.dispose();
@@ -229,11 +236,70 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     async () => {
       const getPoToken = await createPoTokenProvider();
       try {
-        const info = await plays("mweb", new Ytdl({ clients: [Client.Mweb], getPoToken }), VIDEOS.normal);
+        const mweb = new Ytdl({ clients: [Client.Mweb], getPoToken });
+        const info = await plays("mweb", mweb, VIDEOS.long, await longOffsets(mweb));
         expect(info.client).toBe("mweb");
       } finally {
         await getPoToken.dispose();
       }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "SABR on MWEB with a PO token matches the direct bytes",
+    async () => {
+      const provider = await createPoTokenProvider();
+      const bindings: string[] = [];
+      const getPoToken: GetPoToken = (request) => {
+        bindings.push(request.contentBinding);
+        return provider(request);
+      };
+      try {
+        const sabr = new Ytdl({ clients: [Client.Mweb], getPoToken, fetch: withoutDirectUrls });
+        const direct = new Ytdl({ clients: [Client.Mweb], getPoToken });
+        const info = await sabr.getInfo(VIDEOS.long);
+        const format = chooseFormat(info.formats, {
+          quality: Quality.HighestAudio,
+          filter: { hasAudio: true, hasVideo: false },
+        });
+        expect(format.url).toBeUndefined();
+        const directInfo = await direct.getInfo(VIDEOS.long);
+        const directFormat = chooseFormat(directInfo.formats, { format });
+        expect(directFormat.url).toBeString();
+        const size = format.contentLength ?? 0;
+        const start = Math.floor((size * 70) / info.videoDetails.lengthSeconds);
+        const mintsBefore = bindings.length;
+        const bytes = await read(sabr.open(info, format), start, 1024 * 1024);
+        const sabrMints = bindings.slice(mintsBefore);
+        expect(bytes.length).toBe(Math.min(1024 * 1024, size - start));
+        expect(bytes.equals(await read(direct.open(directInfo, directFormat), start, 1024 * 1024))).toBe(true);
+        expect(sabrMints.every((binding) => binding === VIDEOS.long)).toBe(true);
+        rows.push(`  sabr+po ${VIDEOS.long}: ${info.client}, itag ${format.itag}, ${sabrMints.length} SABR mints`);
+      } finally {
+        await provider.dispose();
+      }
+    },
+    2 * TIMEOUT,
+  );
+
+  test(
+    "a full download of the normal video ends at its content length",
+    async () => {
+      const choice: ChooseFormatOptions = {
+        quality: Quality.HighestAudio,
+        filter: { hasAudio: true, hasVideo: false },
+      };
+      const info = await yt.getInfo(VIDEOS.normal);
+      const expected = chooseFormat(info.formats, choice).contentLength;
+      expect(expected).toBeGreaterThan(0);
+      let retries = 0;
+      let bytes = 0;
+      const started = Date.now();
+      for await (const chunk of yt.download(info, { ...choice, onRetry: () => retries++ }))
+        bytes += (chunk as Buffer).length;
+      expect(bytes).toBe(expected as number);
+      rows.push(`  download ${VIDEOS.normal}: ${bytes} bytes, ${retries} retries, ${Date.now() - started} ms`);
     },
     TIMEOUT,
   );
