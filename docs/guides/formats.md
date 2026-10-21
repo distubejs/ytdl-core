@@ -54,10 +54,10 @@ const format = chooseFormat(info.formats, {
 
 ## Stable volume and dubbed audio
 
-Some videos have stable-volume copies (`isDrc`) that share their itag with the original, and dubbed tracks (`audioTrack`). `chooseFormat` prefers the original. To get a specific track, filter on it:
+Some videos have stable-volume copies (`isDrc`) that share their itag with the original, and dubbed tracks (`audioTrack`). `chooseFormat` prefers the original copy and the original-language track, and falls back to a dub only when the list has no original. `audioTrack.audioIsDefault` is YouTube's default for the request language and does not promise the original, so do not filter on it to find the original. To get a specific track, filter on its id:
 
 ```ts
-yt.download(info, { filter: (format) => format.audioTrack?.audioIsDefault === true && !format.isDrc });
+yt.download(info, { filter: (format) => format.audioTrack?.id.startsWith("de") === true && !format.isDrc });
 ```
 
 ## What a format carries

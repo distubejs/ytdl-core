@@ -439,10 +439,54 @@ export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
   return a.itag === b.itag && a.isDrc === b.isDrc && a.audioTrack?.id === b.audioTrack?.id;
 }
 
+function preferring<T>(list: readonly T[], keep: (item: T) => boolean): readonly T[] {
+  const kept = list.filter(keep);
+  return kept.length > 0 ? kept : list;
+}
+
+function lengthDelimitedFields(bytes: Uint8Array): [number, Uint8Array][] {
+  const fields: [number, Uint8Array][] = [];
+  let offset = 0;
+  const varint = (): number => {
+    let value = 0;
+    for (let shift = 0; ; shift += 7) {
+      const byte = bytes[offset++] ?? 0;
+      value += (byte & 0x7f) * 2 ** shift;
+      if ((byte & 0x80) === 0) return value;
+    }
+  };
+  while (offset < bytes.length) {
+    const tag = varint();
+    if (tag % 8 === 0) varint();
+    else if (tag % 8 === 2) {
+      const length = varint();
+      fields.push([Math.floor(tag / 8), bytes.subarray(offset, (offset += length))]);
+    } else break;
+  }
+  return fields;
+}
+
+// The player answer's `xtags` is base64url protobuf: repeated field 1 holding { 1: key, 2: value }.
+function xtag(format: FormatMetadata, key: string): string | undefined {
+  if (!format.xtags) return undefined;
+  const text = new TextDecoder();
+  for (const [field, pair] of lengthDelimitedFields(Buffer.from(format.xtags, "base64url"))) {
+    if (field !== 1) continue;
+    const entry = new Map(lengthDelimitedFields(pair));
+    if (text.decode(entry.get(1)) === key) return text.decode(entry.get(2));
+  }
+  return undefined;
+}
+
+function isDubbed(format: FormatMetadata): boolean {
+  const content = xtag(format, "acont");
+  return content !== undefined && content !== "original";
+}
+
 /**
  * Filters, then picks by quality. A filter list picks with its first entry that yields a format. An
  * explicit `format` is matched in `formats`, so a fresh list's URL replaces a stale one. A DRC variant
- * is picked only when no original matches.
+ * is picked only when no original matches, and a dubbed audio track only when no original-language track does.
  */
 export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
   const wanted = options.format;
@@ -452,8 +496,13 @@ export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFor
   const quality = options.quality ?? "highest";
   for (const matches of matchers(options.filter)) {
     const matching = playable.filter(matches);
-    const originals = matching.filter((format) => !format.isDrc);
-    const chosen = pick(originals.length > 0 ? originals : matching, quality);
+    const chosen = pick(
+      preferring(
+        preferring(matching, (format) => !format.isDrc),
+        (format) => !isDubbed(format),
+      ),
+      quality,
+    );
     if (chosen) return chosen;
   }
   throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);

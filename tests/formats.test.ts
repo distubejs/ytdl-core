@@ -164,6 +164,41 @@ describe("stable-volume variants", () => {
   });
 });
 
+// `xtags` as plN7JMbadRg's player answer sends them: base64url protobuf of acont and lang pairs.
+const XTAGS = {
+  originalEn: "ChEKBWFjb250EghvcmlnaW5hbAoKCgRsYW5nEgJlbg",
+  dubbedDe: "Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICZGU",
+  dubbedFr: "Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICZnI",
+};
+
+const track = (id: string, xtags: string, audioIsDefault: boolean): VideoFormat => ({
+  ...audio(251, "webm", "opus", 130),
+  audioTrack: { id, displayName: id, audioIsDefault },
+  xtags,
+});
+
+describe("dubbed audio tracks", () => {
+  const dub = track("de.3", XTAGS.dubbedDe, true);
+  const original = track("en.4", XTAGS.originalEn, false);
+  const otherDub = track("fr.3", XTAGS.dubbedFr, false);
+
+  test.each([
+    ["the dub first", [dub, otherDub, original]],
+    ["the original last, the dub marked default", [otherDub, dub, original]],
+  ])("highest audio picks the original with %s", (_, list) => {
+    expect(chooseFormat(list, { quality: "highestaudio" })).toBe(original);
+    expect(chooseFormat(list, { quality: 251 })).toBe(original);
+  });
+
+  test("a dub is picked when the list has no original", () => {
+    expect(chooseFormat([dub, otherDub], { quality: "highestaudio" })).toBe(dub);
+  });
+
+  test("an explicit dub format resolves to its own entry", () => {
+    expect(chooseFormat([original, dub], { format: dub })).toBe(dub);
+  });
+});
+
 describe("filters", () => {
   const opus = audio(251, "webm", "opus", 130);
   const aac = audio(140, "mp4", "mp4a.40.2", 160);
