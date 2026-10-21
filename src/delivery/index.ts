@@ -171,7 +171,7 @@ async function* readFile(
   if (!Number.isSafeInteger(start) || start < 0 || !(start <= last)) {
     throw new YtdlError("INVALID_ARGUMENT", `Range start ${start} is outside itag ${itag}`);
   }
-  const total = Number.isFinite(last) ? last - start + 1 : undefined;
+  const total = contentLength !== undefined && Number.isFinite(last) ? last - start + 1 : undefined;
   // A resume can move the format between URL and SABR delivery; the other reader then continues.
   for (;;) {
     const sabr = session.format.url === undefined;
@@ -197,7 +197,7 @@ async function* readRanged(
     if (url === undefined) return;
     // YouTube answers a range that starts past the last byte with HTTP 400.
     const response = await session.request(`${url}${url.includes("?") ? "&" : "?"}range=${position}-${windowEnd}`, {
-      allowBadRequest: last === Infinity && session.downloaded > 0,
+      allowBadRequest: session.format.contentLength === undefined && session.downloaded > 0,
     });
     if (!response) continue;
     if (response.status === 400) {
@@ -209,10 +209,11 @@ async function* readRanged(
       for await (const piece of readBody(response, itag)) {
         // A server may answer past the requested range.
         const bytes = piece.subarray(0, windowEnd - position + 1);
-        if (bytes.length === 0) break;
+        if (bytes.length === 0) continue;
         position += bytes.length;
         session.progress(bytes.length, total);
         yield bytes;
+        if (position > windowEnd) break;
       }
     } catch (error) {
       if (!YtdlError.is(error, "REQUEST_FAILED")) throw error;

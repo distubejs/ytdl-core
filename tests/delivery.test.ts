@@ -296,6 +296,49 @@ describe("ranged delivery", () => {
     expect(progress.at(-1)).toMatchObject({ downloaded: SOURCE.length, total: undefined });
   });
 
+  test("a format of unknown length with a range end past the file ends at the 400 past its last byte", async () => {
+    const file = SOURCE.subarray(0, 2500);
+    const server = mediaServer(file, ({ start }) =>
+      start >= file.length ? new Response(null, { status: 400 }) : undefined,
+    );
+    const { input, retries, progress } = setup({
+      fetch: server.fetch,
+      format: format(1, { contentLength: undefined }),
+      options: { range: { start: 0, end: 4999 } },
+    });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(file);
+    expect(retries).toEqual([]);
+    expect(progress.at(-1)).toMatchObject({ downloaded: file.length, total: undefined });
+  });
+
+  test("an empty body chunk before the bytes is skipped without another request", async () => {
+    const server = mediaServer(SOURCE, ({ start, end }) =>
+      start === 0
+        ? new Response(
+            new ReadableStream({
+              start: (controller) => {
+                controller.enqueue(new Uint8Array());
+                controller.enqueue(SOURCE.slice(start, end + 1));
+                controller.close();
+              },
+            }),
+          )
+        : undefined,
+    );
+    const { input, retries } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(retries).toEqual([]);
+    expect(server.requests.map((request) => request.start)).toEqual([0, 1000, 2000, 3000, 4000, 5000]);
+  });
+
   test("a resume that finds no format ends the stream once with NO_FORMAT caused by the 403", async () => {
     const noFormat = new YtdlError("NO_FORMAT", "No client offers itag 251");
     const { data, errors } = await collectNode(
