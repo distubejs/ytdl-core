@@ -29,7 +29,7 @@ npm install @distube/ytdl-core
 bun add @distube/ytdl-core
 ```
 
-Requires Node.js 22.12 or later, or Bun.
+Requires Node.js 22.22.2+ on 22.x, 24.15.0+ on 24.x, or 26+, or Bun.
 
 ## Usage
 

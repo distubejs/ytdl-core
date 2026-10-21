@@ -15,7 +15,7 @@ npm install @distube/ytdl-core
 bun add @distube/ytdl-core
 ```
 
-ytdl-core runs on Node.js 22.12 or later, and on Bun.
+ytdl-core runs on Node.js 22.22.2+ on 22.x, 24.15.0+ on 24.x, or 26+, and on Bun.
 
 ## Download a video
 
