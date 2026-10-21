@@ -42,10 +42,10 @@
   "scripts": {
     "check": "oxlint --deny-warnings && oxfmt --check",
     "format": "oxfmt",
-    "type": "tsc --noEmit",
+    "type": "tsrs --noEmit",
     "test": "bun test ./tests",
     "test:live": "YTDL_LIVE=1 bun test ./tests/live --timeout 300000",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsrs -p tsconfig.build.json",
     "verify": "bun run check && bun run type && bun run test && bun run build",
     "prepack": "bun run build"
   },
@@ -61,7 +61,7 @@
     "@types/node": "^26.6.5",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
-    "typescript": "^7.0.2"
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929"
   },
   "engines": {
     "node": ">=22.12.0"
