@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { readFileSync } from "node:fs";
 import { CookieAuth } from "../src/auth.ts";
 import { YtdlError } from "../src/errors.ts";
-import { Ytdl } from "../src/index.ts";
+import { Client, Ytdl } from "../src/index.ts";
+import { fakeYouTube, unplayable } from "./fake-youtube.ts";
 import { fakeFetch } from "./fixtures/auth/fake-fetch.ts";
 
 const NOW = 1_700_000_000_000;
@@ -124,6 +125,23 @@ describe("cookie account", () => {
 describe("account options", () => {
   const fetch = fakeFetch(() => {
     throw new Error("no request expected");
+  });
+
+  test("a header read from a file signs in without its trailing newline", async () => {
+    const yt = fakeYouTube({ player: () => unplayable("UNPLAYABLE", "") });
+    const signedIn = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input) === `${ORIGIN}/` ? homePage(`"LOGGED_IN":true`) : yt.fetch(input, init)) as typeof fetch;
+    await new Ytdl({
+      cookie: `${FULL_COOKIE}\n`,
+      fetch: signedIn,
+      playerId: "aaaa0006",
+      clients: [Client.WebCreator],
+      getPoToken: () => Promise.resolve("po-token"),
+    })
+      .getInfo("aqz-KE-bpKQ")
+      .catch(() => undefined);
+
+    expect(yt.playerCalls.map((call) => call.headers.get("Cookie"))).toEqual([FULL_COOKIE]);
   });
 
   test("a signed-out cookie fails construction with INVALID_ARGUMENT and no request", () => {

@@ -54,10 +54,8 @@ export class CookieAuth {
   #session: Promise<Session> | undefined;
 
   constructor(options: CookieAuthOptions) {
-    const header =
-      typeof options.cookie !== "string" || !/[\t\n]/u.test(options.cookie)
-        ? options.cookie
-        : netscapeToCookieHeader(options.cookie);
+    const text = typeof options.cookie === "string" ? options.cookie.trim() : options.cookie;
+    const header = typeof text === "string" && text.includes("\t") ? netscapeToCookieHeader(text) : text;
     if (typeof header !== "string" || !sapisidOf(parseCookieHeader(header))) {
       throw new YtdlError("INVALID_ARGUMENT", "The cookie has no SAPISID or __Secure-3PAPISID value; it is signed out");
     }
