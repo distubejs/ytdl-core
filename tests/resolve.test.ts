@@ -349,6 +349,33 @@ describe("outcomes", () => {
     expect(error.attempts.map((attempt) => attempt.code)).toEqual(["NO_FORMAT", "PRIVATE"]);
   });
 
+  test.each([
+    ["a private video", "PRIVATE", "This video is private", "Dieses Video ist privat"],
+    ["an age gate", "AGE_RESTRICTED", "Sign in to confirm your age", "Melde dich an, um dein Alter zu bestätigen"],
+  ] as const)(
+    "%s under a German lang rejects with its code and keeps the visitor",
+    async (_, code, english, german) => {
+      const yt = fakeYouTube({
+        player: ({ body }) => {
+          const { hl } = (body.context as { client: { hl: string } }).client;
+          return unplayable("LOGIN_REQUIRED", hl === "de" ? german : english);
+        },
+      });
+      const error = await rejection(new Ytdl({ fetch: yt.fetch, lang: "de", clients: [Client.VisionOS] }).getInfo(ID));
+      expect(error.code).toBe(code);
+      expect(yt.clients()).toEqual([VISIONOS]);
+      expect(yt.visitorFetches()).toBe(1);
+    },
+  );
+
+  test("a Music Premium reason rejects as premium-only, not members-only", async () => {
+    const yt = fakeYouTube({
+      player: () => unplayable("UNPLAYABLE", "This video is only available to Music Premium members"),
+    });
+    const error = await rejection(new Ytdl({ fetch: yt.fetch, clients: [Client.VisionOS] }).getInfo(ID));
+    expect(error.code).toBe("PREMIUM_ONLY");
+  });
+
   test("an age gate without an account says how to get past it", async () => {
     const yt = fakeYouTube({ player: () => unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age") });
     const error = await rejection(new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID }).getInfo(ID));

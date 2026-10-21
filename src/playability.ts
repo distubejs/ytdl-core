@@ -52,8 +52,8 @@ export function classifyPlayability(player: Json): Playability {
   }
   if (lower.includes("not a bot")) return fail("BOT_CHECK");
   if (lower.includes("private")) return fail("PRIVATE");
-  if (lower.includes("members") || lower.includes("join this channel")) return fail("MEMBERS_ONLY");
   if (lower.includes("premium")) return fail("PREMIUM_ONLY");
+  if (lower.includes("members") || lower.includes("join this channel")) return fail("MEMBERS_ONLY");
   if (lower.includes("country") || lower.includes("your location")) {
     return fail(
       "REGION_BLOCKED",

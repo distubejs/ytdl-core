@@ -9,6 +9,7 @@ type Endpoint = "player" | "next" | "navigation/resolve_url" | "search" | "brows
 interface InnertubeRequest {
   readonly videoId?: string;
   readonly visitorData: string | undefined;
+  readonly hl?: string;
   readonly body?: Json;
   readonly headers?: Readonly<Record<string, string>> | undefined;
   readonly thirdParty?: Json | undefined;
@@ -103,6 +104,8 @@ export class InnerTube {
   player(request: PlayerRequest, signal: AbortSignal | undefined): Promise<Json> {
     return this.#post("player", CLIENTS[request.client], signal, {
       videoId: request.videoId,
+      // Playability reasons are localized, and `classifyPlayability` reads them in English.
+      hl: "en",
       visitorData: request.visitorData,
       headers: request.authHeaders,
       thirdParty: request.embed && { embedUrl: EMBED_HOST },
@@ -204,7 +207,7 @@ export class InnerTube {
               clientVersion: identity.version,
               ...identity.context,
               userAgent: identity.userAgent,
-              hl: this.lang,
+              hl: request.hl ?? this.lang,
               gl: this.country,
               visitorData: request.visitorData,
             },
