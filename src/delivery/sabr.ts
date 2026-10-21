@@ -4,6 +4,8 @@ import { redact, YtdlError } from "../errors.ts";
 import { type FormatMetadata, parseFormat, sameFormat } from "../formats.ts";
 import type { VideoInfo } from "../info.ts";
 import { at, isRecord, list } from "../json.ts";
+import type { CompletedSegment } from "googlevideo/sabr-stream";
+import type { Track as SabrTrack } from "googlevideo/utils";
 import type { Session } from "./session.ts";
 
 const SABR_REQUEST_RETRIES = 2;
@@ -39,6 +41,17 @@ async function drain(stream: ReadableStream<unknown>): Promise<void> {
   for (;;) if ((await reader.read()).done) return;
 }
 
+function lastBoundaryAtOrBefore(
+  timeAtByte: ReadonlyMap<number, number>,
+  position: number,
+): { byte: number; timeMs: number } | undefined {
+  let found: { byte: number; timeMs: number } | undefined;
+  for (const [byte, timeMs] of timeAtByte) {
+    if (byte <= position && byte > (found?.byte ?? -1)) found = { byte, timeMs };
+  }
+  return found;
+}
+
 function tokenBytes(token: string): Uint8Array {
   return Uint8Array.from(atob(token.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
 }
@@ -56,6 +69,7 @@ export async function* readSabr(
     import("googlevideo/utils"),
   ]);
   let position = start;
+  const timeAtByte = new Map<number, number>();
   const switched = (cause: YtdlError): void => {
     if (startTimeMs === undefined) return;
     const { itag } = session.format;
@@ -101,13 +115,31 @@ export async function* readSabr(
           }),
       },
     });
+    let wantedTrack: SabrTrack | undefined;
+    const unread: CompletedSegment[] = [];
+    const queued = new WeakSet<CompletedSegment>();
+    const queueRecorded = () => {
+      for (const segment of wantedTrack?.trackedSegments.values() ?? []) {
+        if (queued.has(segment)) continue;
+        queued.add(segment);
+        unread.push(segment);
+      }
+    };
+    if (startTimeMs === undefined) {
+      stream.on("formatInitialization", (track) => {
+        if (track.type === (format.hasVideo ? "video" : "audio")) wantedTrack = track;
+      });
+      stream.on("trackStateUpdate", queueRecorded);
+    }
+    // Known ceiling: a deep first `range.start` starts at time 0 because no offsets are known yet; parsing the format's `indexRange` (sidx) would map bytes to time up front.
+    const resumeAt = lastBoundaryAtOrBefore(timeAtByte, position);
     const { audioStream, videoStream } = stream.start({
       audioFormat: audio,
       videoFormat: format.hasVideo ? wanted : undefined,
       enabledTrackTypes: format.hasVideo ? EnabledTrackTypes.VIDEO_AND_AUDIO : EnabledTrackTypes.AUDIO_ONLY,
       isPostLiveDvr: false,
       maxRetries: SABR_REQUEST_RETRIES,
-      startTimeMs,
+      startTimeMs: resumeAt?.timeMs ?? startTimeMs,
     });
     const abort = () => void stream.abort().catch(ignore);
     signal.addEventListener("abort", abort, { once: true });
@@ -117,9 +149,32 @@ export async function* readSabr(
     let failure: unknown;
     try {
       for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const read = await reader.read().catch((error: unknown) => {
+          signal.throwIfAborted();
+          failure = error;
+          return undefined;
+        });
+        if (!read) break;
+        const { done, value } = read;
+        if (done) {
+          if (last === Infinity) return;
+          failure = new Error(`session ended at byte ${offset}`);
+          break;
+        }
         const chunk = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        queueRecorded();
+        const segment = unread.shift();
+        const byteStart = Number(segment?.mediaHeader.segmentByteRangeStart);
+        if (segment && !segment.mediaHeader.isInitializationSegment && byteStart > 0) {
+          if (byteStart > position) {
+            failure = new Error(`segment at byte ${byteStart} skips byte ${position}`);
+            break;
+          }
+          offset = byteStart;
+          timeAtByte.set(byteStart, segment.startTimeMs);
+          const byteEnd = byteStart + chunk.length;
+          if (!timeAtByte.has(byteEnd)) timeAtByte.set(byteEnd, segment.endTimeMs);
+        }
         const from = Math.max(position - offset, 0);
         const to = Math.min(chunk.length, last - offset + 1);
         offset += chunk.length;
@@ -130,11 +185,6 @@ export async function* readSabr(
         }
         if (position > last) return;
       }
-      if (last === Infinity) return;
-      failure = new Error(`session ended at byte ${offset}`);
-    } catch (error) {
-      signal.throwIfAborted();
-      failure = error;
     } finally {
       signal.removeEventListener("abort", abort);
       abort();

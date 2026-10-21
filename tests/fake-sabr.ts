@@ -15,7 +15,7 @@ export const SABR_URL = "https://rr2---sn-test.googlevideo.com/videoplayback?sab
 const USTREAMER_PREFIX = "fake-sabr:";
 const DURATION_MS = 100_000;
 const LAST_MODIFIED = "1700000000000000";
-const SEGMENTS_PER_RESPONSE = 2;
+const SEGMENTS_PER_RESPONSE = 1;
 const ATTESTATION_BACKOFF_MS = 10;
 
 export interface SabrFormatSpec {
@@ -93,6 +93,12 @@ export interface SabrServerOptions {
   readonly failOn?: (index: number) => boolean;
   /** Answer STREAM_PROTECTION_STATUS 2 (pending) and withhold media until a POST carries a PO token. */
   readonly requireAttestation?: boolean;
+  /** Leave `segmentByteRangeStart` off media headers. */
+  readonly omitByteOffsets?: boolean;
+  /** Answer a session's first POST past time 0 with the init segment only; googlevideo then rewinds to time 0. */
+  readonly initOnlyOnLateStart?: boolean;
+  /** Answer the first request for this 1-based media segment with the segment after it, as a dropped partial segment does. */
+  readonly skipSegmentOnce?: number;
 }
 
 export interface SabrRequest {
@@ -104,6 +110,7 @@ export interface SabrRequest {
 }
 
 interface Segment {
+  readonly byteStart: number;
   readonly start: number;
   readonly end: number;
   readonly bytes: Uint8Array;
@@ -114,6 +121,7 @@ function splitIntoSegments(format: SabrFormatSpec): { init: Uint8Array; media: S
   const cut = (i: number) => Math.round((i * format.bytes.length) / (count + 1));
   const time = (i: number) => Math.round((i * (format.durationMs ?? DURATION_MS)) / count);
   const media = Array.from({ length: count }, (_, i) => ({
+    byteStart: cut(i + 1),
     start: time(i),
     end: time(i + 1),
     bytes: format.bytes.subarray(cut(i + 1), cut(i + 2)),
@@ -124,6 +132,7 @@ function splitIntoSegments(format: SabrFormatSpec): { init: Uint8Array; media: S
 /** Answers POSTs to `SABR_URL`; `fetch(inner)` sends every other request to `inner`, `requests` has one entry per POST. */
 export function sabrServer(options: SabrServerOptions) {
   const requests: SabrRequest[] = [];
+  let skipped = false;
   const sabrUrl = new URL(SABR_URL);
   const formats = options.formats.map((format) => ({
     format,
@@ -160,6 +169,7 @@ export function sabrServer(options: SabrServerOptions) {
     // SabrStream lists a format here once it has seen its FORMAT_INITIALIZATION_METADATA,
     // whether or not the init segment arrived, so both travel in one response.
     const initialized = new Set(body.initializationFormatIds.map(trackKey));
+    const initOnly = options.initOnlyOnLateStart === true && initialized.size === 0 && playerTimeMs > 0;
 
     const out = new CompositeBuffer();
     const ump = new UmpWriter(out);
@@ -196,8 +206,13 @@ export function sabrServer(options: SabrServerOptions) {
         );
         writeSegment({ ...common, isInitializationSegment: true, segmentNum: 0 }, init);
       }
-      const first = media.findIndex((segment) => segment.end > playerTimeMs);
+      if (initOnly) continue;
+      let first = media.findIndex((segment) => segment.end > playerTimeMs);
       if (first === -1) continue;
+      if (!skipped && first + 1 === options.skipSegmentOnce) {
+        skipped = true;
+        first++;
+      }
       for (const [offset, segment] of media.slice(first, first + SEGMENTS_PER_RESPONSE).entries()) {
         const timeRange = {
           startTicks: String(segment.start),
@@ -205,8 +220,9 @@ export function sabrServer(options: SabrServerOptions) {
           timescale: 1000,
         };
         const segmentNum = first + offset + 1;
+        const segmentByteRangeStart = options.omitByteOffsets ? undefined : String(segment.byteStart);
         writeSegment(
-          { ...common, segmentNum, startMs: String(segment.start), durationMs: "0", timeRange },
+          { ...common, segmentNum, segmentByteRangeStart, startMs: String(segment.start), durationMs: "0", timeRange },
           segment.bytes,
         );
       }

@@ -22,14 +22,14 @@ interface Setup extends Omit<SabrServerOptions, "formats" | "failOn"> {
   readonly formats?: readonly SabrFormatSpec[];
   readonly player?: FakeOptions["player"];
   readonly media?: FakeOptions["media"];
-  /** Fails every POST after the first until the download resolves the video again. */
-  readonly failUntilResumed?: boolean;
+  /** Fails every POST from this 0-based index until the download resolves the video again. */
+  readonly failFrom?: number;
   readonly getPoToken?: (request: PoTokenRequest) => Promise<string>;
 }
 
-function setup({ formats = FORMATS, player, media, failUntilResumed, getPoToken, ...server }: Setup = {}) {
+function setup({ formats = FORMATS, player, media, failFrom, getPoToken, ...server }: Setup = {}) {
   const yt = fakeYouTube({ player: player ?? (() => sabrPlayable(ID, formats)), media });
-  const failOn = failUntilResumed ? (index: number) => index > 0 && yt.clients().length === 1 : undefined;
+  const failOn = failFrom === undefined ? undefined : (index: number) => index >= failFrom && yt.clients().length === 1;
   const sabr = sabrServer({ formats, failOn, ...server });
   return { yt, sabr, ytdl: new Ytdl({ fetch: sabr.fetch(yt.fetch), getPoToken, playerId: PLAYER_ID }) };
 }
@@ -169,17 +169,54 @@ describe("SABR delivery", () => {
   });
 
   test("a session that fails partway resumes and still yields the exact bytes", async () => {
-    const { ytdl } = setup({ failUntilResumed: true });
+    const { ytdl } = setup({ failFrom: 1 });
     const { body, retries } = await download(ytdl, { quality: 251 });
 
     expect(body).toEqual(Buffer.from(AUDIO.bytes));
     expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
   });
 
+  test("a session that fails after segment 7 of 9 resumes at segment 8's start time with the exact bytes", async () => {
+    const track = tenSecondSegments(9);
+    const { sabr, ytdl } = setup({ formats: [track], failFrom: 7 });
+    const { body } = await download(ytdl, { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(track.bytes));
+    expect(sabr.requests.map((request) => request.playerTimeMs).filter((time) => time < 70_000)).toEqual([
+      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000,
+    ]);
+  });
+
+  test("a failed session without byte offsets restarts at time 0 with the exact bytes", async () => {
+    const track = tenSecondSegments(9);
+    const { sabr, ytdl } = setup({ formats: [track], failFrom: 7, omitByteOffsets: true });
+    const { body } = await download(ytdl, { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(track.bytes));
+    expect(sabr.requests.filter((request) => request.playerTimeMs === 0)).toHaveLength(2);
+  });
+
+  test("a resumed session that rewinds to time 0 still yields the exact bytes", async () => {
+    const track = tenSecondSegments(9);
+    const { sabr, ytdl } = setup({ formats: [track], failFrom: 7, initOnlyOnLateStart: true });
+    const { body, retries } = await download(ytdl, { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(track.bytes));
+    expect(retries).toHaveLength(1);
+    expect(sabr.requests.filter((request) => request.playerTimeMs === 0)).toHaveLength(2);
+  });
+
+  test("a session that skips a segment resumes from the missing byte instead of leaving a gap", async () => {
+    const { body, retries } = await download(setup({ skipSegmentOnce: 2 }).ytdl, { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes));
+    expect(retries.map((retry) => retry.reason)).toEqual(["SABR session failed"]);
+  });
+
   test("a resume that answers with a direct URL finishes the bytes through ranged requests", async () => {
     let answers = 0;
     const { ytdl } = setup({
-      failUntilResumed: true,
+      failFrom: 1,
       player: () =>
         answers++ === 0
           ? sabrPlayable(ID, FORMATS)
@@ -198,7 +235,7 @@ describe("SABR delivery", () => {
   test("a resume that offers another file under the same itag fails instead of stitching it", async () => {
     let answers = 0;
     const stream = setup({
-      failUntilResumed: true,
+      failFrom: 1,
       player: () =>
         answers++ === 0
           ? sabrPlayable(ID, FORMATS)
@@ -225,6 +262,29 @@ describe("SABR delivery", () => {
     expect(error).toBeInstanceOf(YtdlError);
     expect(error).toMatchObject({ code: "REQUEST_FAILED" });
     expect(retries.map((retry) => retry.attempt)).toEqual([1, 2, 3]);
+  });
+
+  test("an onProgress that throws ends the stream once with its error, without a retry or a gap", async () => {
+    const listenerFailure = new Error("listener failed");
+    const { retries, onRetry } = recorder();
+    let calls = 0;
+    const stream = setup().ytdl.download(ID, {
+      quality: 251,
+      onRetry,
+      onProgress: () => {
+        if (++calls === 2) throw listenerFailure;
+      },
+    });
+    const chunks: Uint8Array[] = [];
+    const errors: unknown[] = [];
+    stream.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+    stream.on("error", (error) => errors.push(error));
+    await new Promise((resolve) => stream.once("close", resolve));
+    const body = Buffer.concat(chunks);
+
+    expect(errors).toEqual([listenerFailure]);
+    expect(retries).toEqual([]);
+    expect(body).toEqual(Buffer.from(AUDIO.bytes.subarray(0, body.length)));
   });
 
   test("destroying the stream stops a session that waits on the server", async () => {
@@ -259,7 +319,7 @@ describe("SABR delivery", () => {
   test("a failed session after a failed mint reports the getPoToken error instead of resuming", async () => {
     const minter = new Error("minter down");
     const { retries, ...seen } = recorder();
-    const stream = setup({ failUntilResumed: true, getPoToken: () => Promise.reject(minter) }).ytdl.download(ID, {
+    const stream = setup({ failFrom: 1, getPoToken: () => Promise.reject(minter) }).ytdl.download(ID, {
       quality: 251,
       ...seen,
     });
@@ -285,7 +345,7 @@ describe("SABR delivery", () => {
 
   test("a time-started session that fails partway restarts at the time without gap or repeat", async () => {
     const track = tenSecondSegments(10);
-    const { body, retries } = await download(setup({ formats: [track], failUntilResumed: true }).ytdl, {
+    const { body, retries } = await download(setup({ formats: [track], failFrom: 1 }).ytdl, {
       quality: 251,
       startTimeMs: 45_000,
     });
@@ -325,7 +385,7 @@ describe("SABR delivery", () => {
     const media: URL[] = [];
     const { ytdl } = setup({
       formats: [track],
-      failUntilResumed: true,
+      failFrom: 1,
       player: () =>
         answers++ === 0
           ? sabrPlayable(ID, [track])
