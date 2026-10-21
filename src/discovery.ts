@@ -63,7 +63,10 @@ function rendererSummary(renderer: Json): VideoSummary | undefined {
   if (!id || !title || at(renderer, "isPlayable") === false) return undefined;
   const isLive =
     collect(renderer, "metadataBadgeRenderer").some((badge) => /LIVE/u.test(String(at(badge, "style")))) ||
-    collect(renderer, "thumbnailOverlayTimeStatusRenderer").some((overlay) => at(overlay, "style") === "LIVE");
+    collect(renderer, "thumbnailOverlayTimeStatusRenderer").some((overlay) => at(overlay, "style") === "LIVE") ||
+    (at(renderer, "lengthText") === undefined &&
+      at(renderer, "lengthSeconds") === undefined &&
+      at(renderer, "upcomingEventData") === undefined);
   return {
     id,
     title,

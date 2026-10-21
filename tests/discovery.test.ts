@@ -6,14 +6,16 @@ import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
 // Recorded 2026-10-20 from WEB with visitor data. Search: "blender open movie" with the video filter, first and
 // continuation page, Blender uploads only. Mixed: "nasa jpl" without a filter, NASA uploads, channels, a shelf, a
 // Shorts shelf and a playlist. Live: the live filter for "NASA", its one result relabelled as NASA's ISS stream.
-// Playlist: PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5 (NASA, Perseverance Mars Rover), both pages. Short playlist:
-// PL6B3937A5D230E335 (Blender, Official Blender Open Movies), one page with only a section-level continuation. Missing:
-// the answer for a well-formed unknown playlist ID. Every answer is trimmed to the parsed fields; tracking and visitor
+// Unbadged, recorded 2026-10-21 with the video filter: NASA's ISS stream, live without a badge, from "nasa live", then
+// NASA's scheduled "Artemis Acceleration" stream, from its title. Playlist: PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5 (NASA,
+// Perseverance Mars Rover), both pages. Short playlist: PL6B3937A5D230E335 (Blender, Official Blender Open Movies), one
+// page with only a section-level continuation. Missing: the answer for a well-formed unknown playlist ID. Every answer is trimmed to the parsed fields; tracking and visitor
 // data are gone, and the search continuation tokens, which encode third-party IDs, are replaced by labels.
 const SEARCH_PAGE = fixture("search-web.json");
 const SEARCH_NEXT_PAGE = fixture("search-continuation-web.json");
 const MIXED_PAGE = fixture("search-mixed-web.json");
 const LIVE_PAGE = fixture("search-live-web.json");
+const UNBADGED_PAGE = fixture("search-unbadged-web.json");
 const PLAYLIST_ID = "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5";
 const PLAYLIST_PAGE = fixture("browse-playlist-web.json");
 const PLAYLIST_NEXT_PAGE = fixture("browse-continuation-web.json");
@@ -159,6 +161,18 @@ describe("search", () => {
     const { ytdl } = setup({ [SEARCH]: pages(LIVE_PAGE) });
     const [video] = await ytdl.search("NASA");
     expect(video).toMatchObject({ isLive: true, lengthSeconds: undefined });
+  });
+
+  test("a result with no length, badge or schedule is live, and a scheduled premiere is not", async () => {
+    const [liveId, premiereId] = videoIds(UNBADGED_PAGE);
+    const { ytdl } = setup({ [SEARCH]: pages(UNBADGED_PAGE) });
+
+    const videos = await ytdl.search("NASA");
+
+    expect(videos.map(({ id, isLive, lengthSeconds }) => ({ id, isLive, lengthSeconds }))).toEqual([
+      { id: liveId!, isLive: true, lengthSeconds: undefined },
+      { id: premiereId!, isLive: false, lengthSeconds: undefined },
+    ]);
   });
 
   test("a result without a view count keeps its other fields and one without a title is skipped", async () => {
