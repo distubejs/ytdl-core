@@ -289,11 +289,18 @@ export class Ytdl {
     if (at(resolution.player, "videoDetails", "isLive") !== true || !resolution.hlsManifestUrl) {
       return resolution.formats;
     }
-    const playlist = await this.#innertube.text(
-      resolution.hlsManifestUrl,
-      { headers: userAgentHeader(resolution.client), signal },
-      "YouTube HLS manifest",
-    );
+    let playlist: string;
+    try {
+      playlist = await this.#innertube.text(
+        resolution.hlsManifestUrl,
+        { headers: userAgentHeader(resolution.client), signal },
+        "YouTube HLS manifest",
+      );
+    } catch (error) {
+      const failed = YtdlError.is(error, "REQUEST_FAILED") || YtdlError.is(error, "RATE_LIMITED");
+      if (signal?.aborted || !failed || !resolution.formats.some((format) => format.isLive)) throw error;
+      return resolution.formats;
+    }
     return [...parseHlsMaster(playlist, resolution.hlsManifestUrl, resolution.client), ...resolution.formats];
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Ytdl } from "../src/index.ts";
+import { Ytdl, YtdlError } from "../src/index.ts";
 import { audioFormat, fakeYouTube, fixture, playable, VISIONOS } from "./fake-youtube.ts";
 
 // Recorded 2026-10-20 from VISIONOS and WEB `next` for aqz-KE-bpKQ (Big Buck Bunny, CC BY 3.0), personal data
@@ -261,6 +261,29 @@ describe("getInfo", () => {
       hasAudio: true,
       hasVideo: true,
       qualityLabel: "720p",
+    });
+  });
+
+  describe("a live video whose HLS master answers 500", () => {
+    const manifest = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/live";
+    const live = (adaptiveFormats: readonly Record<string, unknown>[]) =>
+      fakeYouTube({
+        player: () => ({
+          ...playable(ID, adaptiveFormats),
+          videoDetails: { videoId: ID, isLive: true },
+          streamingData: { adaptiveFormats, hlsManifestUrl: manifest },
+        }),
+        routes: { [manifest]: () => new Response("unavailable", { status: 500 }) },
+      });
+
+    test("keeps its DASH formats", async () => {
+      const info = await new Ytdl({ fetch: live([audioFormat(251)]).fetch }).getInfo(ID);
+      expect(info.formats).toEqual([expect.objectContaining({ itag: 251, isHLS: false, isLive: true })]);
+    });
+
+    test("rejects REQUEST_FAILED without DASH formats", async () => {
+      const error = await new Ytdl({ fetch: live([]).fetch }).getInfo(ID).catch((caught: unknown) => caught);
+      expect(YtdlError.is(error, "REQUEST_FAILED")).toBe(true);
     });
   });
 
