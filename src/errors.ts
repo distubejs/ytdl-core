@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import type { Client } from "./clients.ts";
 
 /**
@@ -67,7 +68,7 @@ export class YtdlError extends Error {
   readonly availableCountries: readonly string[] | undefined;
 
   constructor(code: YtdlErrorCode, message: string, details: YtdlErrorDetails = {}) {
-    super(redact(message), details.cause === undefined ? undefined : { cause: details.cause });
+    super(redact(message), details.cause === undefined ? undefined : { cause: redactCause(details.cause) });
     this.code = code;
     this.attempts = Object.freeze(
       (details.attempts ?? []).map((attempt) => ({ ...attempt, reason: redact(attempt.reason) })),
@@ -82,6 +83,7 @@ export class YtdlError extends Error {
 }
 
 const SIGNED_PARAMS = /([?&](?:sig|signature|n|pot|lsig|s)=)[^&#\s"']*/giu;
+const SIGNED_PATH_SEGMENTS = /(\/(?:sig|signature|n|pot|lsig|s)\/)(?!player\/)[^/?#\s"']*/giu;
 // Process-wide, so secrets outlive their instance; key it per instance if that matters.
 const SECRETS = new Set<string>();
 
@@ -90,7 +92,22 @@ export function registerSecret(secret: string): void {
 }
 
 export function redact(text: string): string {
-  let out = text.replace(SIGNED_PARAMS, "$1[redacted]");
+  let out = text.replace(SIGNED_PARAMS, "$1[redacted]").replace(SIGNED_PATH_SEGMENTS, "$1[redacted]");
   for (const secret of SECRETS) out = out.split(secret).join("[redacted]");
   return out;
+}
+
+function redactCause(cause: unknown): unknown {
+  if (typeof cause === "string") return redact(cause);
+  if (cause instanceof YtdlError) return cause;
+  const shown = inspect(cause, {
+    depth: Infinity,
+    showHidden: true,
+    maxArrayLength: Infinity,
+    maxStringLength: Infinity,
+  });
+  if (redact(shown) === shown) return cause;
+  if (!(cause instanceof Error)) return new Error(redact(shown));
+  const { code } = cause as { code?: unknown };
+  return Object.assign(new Error(redact(cause.message)), { name: cause.name }, code === undefined ? {} : { code });
 }
