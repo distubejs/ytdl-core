@@ -70,6 +70,8 @@ export async function* readSabr(
   ]);
   let position = start;
   const timeAtByte = new Map<number, number>();
+  let initSent = false;
+  let lastSentStartMs: number | undefined;
   const switched = (cause: YtdlError): void => {
     if (startTimeMs === undefined) return;
     const { itag } = session.format;
@@ -125,21 +127,22 @@ export async function* readSabr(
         unread.push(segment);
       }
     };
-    if (startTimeMs === undefined) {
-      stream.on("formatInitialization", (track) => {
-        if (track.type === (format.hasVideo ? "video" : "audio")) wantedTrack = track;
-      });
-      stream.on("trackStateUpdate", queueRecorded);
-    }
+    stream.on("formatInitialization", (track) => {
+      if (track.type === (format.hasVideo ? "video" : "audio")) wantedTrack = track;
+    });
+    stream.on("trackStateUpdate", queueRecorded);
     // Known ceiling: a deep first `range.start` starts at time 0 because no offsets are known yet; parsing the format's `indexRange` (sidx) would map bytes to time up front.
-    const resumeAt = lastBoundaryAtOrBefore(timeAtByte, position);
+    const sessionStartMs =
+      startTimeMs === undefined
+        ? lastBoundaryAtOrBefore(timeAtByte, position)?.timeMs
+        : (lastSentStartMs ?? startTimeMs);
     const { audioStream, videoStream } = stream.start({
       audioFormat: audio,
       videoFormat: format.hasVideo ? wanted : undefined,
       enabledTrackTypes: format.hasVideo ? EnabledTrackTypes.VIDEO_AND_AUDIO : EnabledTrackTypes.AUDIO_ONLY,
       isPostLiveDvr: false,
       maxRetries: SABR_REQUEST_RETRIES,
-      startTimeMs: resumeAt?.timeMs ?? startTimeMs,
+      startTimeMs: sessionStartMs,
     });
     const abort = () => void stream.abort().catch(ignore);
     signal.addEventListener("abort", abort, { once: true });
@@ -164,16 +167,37 @@ export async function* readSabr(
         const chunk = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
         queueRecorded();
         const segment = unread.shift();
-        const byteStart = Number(segment?.mediaHeader.segmentByteRangeStart);
-        if (segment && !segment.mediaHeader.isInitializationSegment && byteStart > 0) {
+        if (startTimeMs !== undefined) {
+          if (!segment) {
+            failure = new Error("a media chunk arrived without its segment header");
+            break;
+          }
+          if (segment.mediaHeader.isInitializationSegment) {
+            if (initSent) continue;
+            initSent = true;
+          } else {
+            if (segment.endTimeMs <= startTimeMs || segment.startTimeMs <= (lastSentStartMs ?? -1)) continue;
+            lastSentStartMs = segment.startTimeMs;
+          }
+          position += chunk.length;
+          session.progress(chunk.length, total);
+          yield chunk;
+          continue;
+        }
+        if (!segment?.mediaHeader.isInitializationSegment) {
+          const byteStart = Number(segment?.mediaHeader.segmentByteRangeStart);
           if (byteStart > position) {
             failure = new Error(`segment at byte ${byteStart} skips byte ${position}`);
             break;
           }
-          offset = byteStart;
-          timeAtByte.set(byteStart, segment.startTimeMs);
-          const byteEnd = byteStart + chunk.length;
-          if (!timeAtByte.has(byteEnd)) timeAtByte.set(byteEnd, segment.endTimeMs);
+          if (segment && byteStart > 0) {
+            offset = byteStart;
+            timeAtByte.set(byteStart, segment.startTimeMs);
+          } else if ((sessionStartMs ?? 0) > 0) {
+            failure = new Error(`a session started at ${sessionStartMs} ms sent media without a byte offset`);
+            timeAtByte.clear();
+            break;
+          }
         }
         const from = Math.max(position - offset, 0);
         const to = Math.min(chunk.length, last - offset + 1);

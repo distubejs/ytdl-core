@@ -176,20 +176,20 @@ describe("SABR delivery", () => {
     expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
   });
 
-  test("a session that fails after segment 7 of 9 resumes at segment 8's start time with the exact bytes", async () => {
+  test("a session that fails at the end of segment 7 of 9 resumes at segment 7's start time with the exact bytes", async () => {
     const track = tenSecondSegments(9);
     const { sabr, ytdl } = setup({ formats: [track], failFrom: 7 });
     const { body } = await download(ytdl, { quality: 251 });
 
     expect(body).toEqual(Buffer.from(track.bytes));
     expect(sabr.requests.map((request) => request.playerTimeMs).filter((time) => time < 70_000)).toEqual([
-      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000,
+      0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000, 60_000,
     ]);
   });
 
   test("a failed session without byte offsets restarts at time 0 with the exact bytes", async () => {
     const track = tenSecondSegments(9);
-    const { sabr, ytdl } = setup({ formats: [track], failFrom: 7, omitByteOffsets: true });
+    const { sabr, ytdl } = setup({ formats: [track], failFrom: 7, omitByteOffsets: () => true });
     const { body } = await download(ytdl, { quality: 251 });
 
     expect(body).toEqual(Buffer.from(track.bytes));
@@ -204,6 +204,17 @@ describe("SABR delivery", () => {
     expect(body).toEqual(Buffer.from(track.bytes));
     expect(retries).toHaveLength(1);
     expect(sabr.requests.filter((request) => request.playerTimeMs === 0)).toHaveLength(2);
+  });
+
+  test("a replacement session past 0 without byte offsets fails and the next one restarts at time 0", async () => {
+    const track = tenSecondSegments(9);
+    const { sabr, ytdl } = setup({ formats: [track], failFrom: 3, omitByteOffsets: (index) => index >= 3 });
+    const { body, retries } = await download(ytdl, { quality: 251 });
+    const times = sabr.requests.map((request) => request.playerTimeMs);
+
+    expect(body).toEqual(Buffer.from(track.bytes));
+    expect(retries.map((retry) => retry.reason)).toEqual(["SABR session failed", "SABR session failed"]);
+    expect(times.filter((time) => time === 0 || time === 20_000)).toEqual([0, 20_000, 20_000, 0, 20_000]);
   });
 
   test("a session that skips a segment resumes from the missing byte instead of leaving a gap", async () => {
@@ -352,6 +363,16 @@ describe("SABR delivery", () => {
 
     expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(5_000)]));
     expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
+  });
+
+  test("a time-started session that rewinds to time 0 yields the bytes of one served from the segment holding the time", async () => {
+    const track = tenSecondSegments(6);
+    const { sabr, ytdl } = setup({ formats: [track], initOnlyOnLateStart: true });
+    const { body, retries } = await download(ytdl, { quality: 251, startTimeMs: 45_000 });
+
+    expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(5_000, 7_000)]));
+    expect(retries).toEqual([]);
+    expect(sabr.requests.map((request) => request.playerTimeMs)).toContain(0);
   });
 
   test.each([

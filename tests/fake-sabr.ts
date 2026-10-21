@@ -93,8 +93,8 @@ export interface SabrServerOptions {
   readonly failOn?: (index: number) => boolean;
   /** Answer STREAM_PROTECTION_STATUS 2 (pending) and withhold media until a POST carries a PO token. */
   readonly requireAttestation?: boolean;
-  /** Leave `segmentByteRangeStart` off media headers. */
-  readonly omitByteOffsets?: boolean;
+  /** Leaves `segmentByteRangeStart` off the media headers of each POST (0-based index) it returns true for. */
+  readonly omitByteOffsets?: (index: number) => boolean;
   /** Answer a session's first POST past time 0 with the init segment only; googlevideo then rewinds to time 0. */
   readonly initOnlyOnLateStart?: boolean;
   /** Answer the first request for this 1-based media segment with the segment after it, as a dropped partial segment does. */
@@ -220,7 +220,9 @@ export function sabrServer(options: SabrServerOptions) {
           timescale: 1000,
         };
         const segmentNum = first + offset + 1;
-        const segmentByteRangeStart = options.omitByteOffsets ? undefined : String(segment.byteStart);
+        const segmentByteRangeStart = options.omitByteOffsets?.(requests.length - 1)
+          ? undefined
+          : String(segment.byteStart);
         writeSegment(
           { ...common, segmentNum, segmentByteRangeStart, startMs: String(segment.start), durationMs: "0", timeRange },
           segment.bytes,
