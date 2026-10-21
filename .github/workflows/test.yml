@@ -28,17 +28,3 @@ jobs:
           node-version: 22.22.2
       - run: bun run verify
       - run: sh scripts/check-pack.sh
-
-  live:
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - run: bun run test:live
-        env:
-          YTDL_COOKIE: ${{ secrets.YTDL_COOKIE }}
-          YTDL_HOST: github-actions

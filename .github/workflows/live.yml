@@ -1,0 +1,23 @@
+name: Live
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run test:live
+        env:
+          YTDL_COOKIE: ${{ secrets.YTDL_COOKIE }}
+          YTDL_HOST: github-actions
