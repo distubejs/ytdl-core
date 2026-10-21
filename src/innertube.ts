@@ -1,6 +1,6 @@
 import { type ClientDefinition, CLIENTS, type Client, userAgentHeader, WEB, YOUTUBE_ORIGIN } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
-import { abortable, expectOk, fetchText, ignore, send } from "./http.ts";
+import { abortable, bodyText, expectOk, fetchText, ignore, send } from "./http.ts";
 import { at, isRecord, type Json, str, ytcfg } from "./json.ts";
 
 type Identity = Pick<ClientDefinition, "name" | "nameId" | "version" | "userAgent" | "context" | "origin">;
@@ -223,11 +223,11 @@ export class InnerTube {
       response.body?.cancel().catch(ignore);
       throw new YtdlError("NOT_FOUND", request.notFound);
     }
+    const text = await bodyText(expectOk(response, what), signal, what);
     let json: unknown;
     try {
-      json = await expectOk(response, what).json();
+      json = JSON.parse(text);
     } catch (cause) {
-      if (YtdlError.is(cause)) throw cause;
       throw new YtdlError("REQUEST_FAILED", `${what} returned invalid JSON`, { cause });
     }
     if (!isRecord(json)) throw new YtdlError("REQUEST_FAILED", `${what} returned no object`);

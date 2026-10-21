@@ -243,6 +243,45 @@ describe("getCaptions failures", () => {
     expect(error.message).not.toContain("SECRET");
   });
 
+  test("a body that stalls rejects with REQUEST_FAILED and a TimeoutError cause", async () => {
+    const yt = fakeYouTube({
+      player: () => synthetic([{ lang: "en" }]),
+      media: (url) =>
+        url.pathname === "/api/timedtext"
+          ? new Response(
+              new ReadableStream({ start: (controller) => controller.enqueue(new TextEncoder().encode("WEBVTT")) }),
+            )
+          : undefined,
+    });
+    const error = await rejection(new Ytdl({ fetch: yt.fetch, timeoutMs: 50 }).getCaptions(ID));
+
+    expect(error.code).toBe("REQUEST_FAILED");
+    expect(error.cause instanceof DOMException && error.cause.name).toBe("TimeoutError");
+  });
+
+  test("a signal aborted while the body streams rejects with its reason", async () => {
+    const reason = new Error("stop");
+    const caller = new AbortController();
+    const yt = fakeYouTube({ player: () => synthetic([{ lang: "en" }]) });
+    const streaming = (signal: AbortSignal | null | undefined) =>
+      new Response(
+        new ReadableStream({
+          start: (controller) => {
+            controller.enqueue(new TextEncoder().encode("WEBVTT"));
+            signal?.addEventListener("abort", () => controller.error(signal.reason));
+            caller.abort(reason);
+          },
+        }),
+      );
+    const ytdl = new Ytdl({
+      fetch: (async (input: string | URL | Request, init?: RequestInit) =>
+        String(input).includes("/api/timedtext") ? streaming(init?.signal) : yt.fetch(input, init)) as typeof fetch,
+    });
+    const info = await ytdl.getInfo(ID);
+
+    expect(await ytdl.getCaptions(info, { signal: caller.signal }).catch((error: unknown) => error)).toBe(reason);
+  });
+
   test.each<[string, string | undefined]>([
     ["a track is chosen", "en"],
     ["no track matches", "fr"],

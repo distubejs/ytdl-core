@@ -2,6 +2,7 @@ import type { Readable } from "node:stream";
 import { CookieAuth } from "./auth.ts";
 import { CLIENTS, DEFAULT_CLIENTS, userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
+import { timed } from "./http.ts";
 import { deliver, type Delivery, Media, type Playback, type ResumeRequest } from "./delivery/index.ts";
 import { checkPlayable, chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
@@ -47,7 +48,15 @@ export interface YtdlOptions {
   readonly country?: string;
   /** Pins the player.js version used for solving. */
   readonly playerId?: string;
+  /**
+   * Milliseconds a request may wait for its response headers or its next body chunk before it fails with
+   * `REQUEST_FAILED`.
+   * @defaultValue `30000`
+   */
+  readonly timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface LookupOptions {
   /** Aborting it cancels the lookup or download. */
@@ -75,6 +84,10 @@ export class Ytdl {
     if (options.fetch !== undefined && typeof options.fetch !== "function") {
       throw new YtdlError("INVALID_ARGUMENT", "fetch must be a function");
     }
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new YtdlError("INVALID_ARGUMENT", "timeoutMs must be a finite number above 0");
+    }
     const clients = options.clients ?? DEFAULT_CLIENTS;
     if (
       !Array.isArray(clients) ||
@@ -88,7 +101,7 @@ export class Ytdl {
     if (planClients({ clients, ...credentials }, new Map(), 0).length === 0) {
       throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie or getPoToken this instance lacks");
     }
-    const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+    const fetcher = timed(options.fetch ?? globalThis.fetch.bind(globalThis), timeoutMs);
     this.#innertube = new InnerTube({ fetch: fetcher, lang: options.lang, country: options.country });
     const auth = options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher });
     const { getPoToken } = options;

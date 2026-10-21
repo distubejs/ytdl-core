@@ -443,3 +443,36 @@ describe("channel live URLs", () => {
     expect(yt.playerCalls).toHaveLength(0);
   });
 });
+
+const hangingPlayer = (fetch: typeof globalThis.fetch) =>
+  (async (input: string | URL | Request, init?: RequestInit) =>
+    String(input).includes("/youtubei/v1/player")
+      ? new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        })
+      : fetch(input, init)) as typeof globalThis.fetch;
+
+const causes = (error: unknown): unknown[] =>
+  error instanceof Error ? [error, ...causes(error.cause)] : error === undefined ? [] : [error];
+
+describe("timeouts", () => {
+  test("a player request that never answers rejects REQUEST_FAILED after timeoutMs", async () => {
+    const yt = fakeYouTube({ player: () => playable(ID) });
+    const ytdl = new Ytdl({ fetch: hangingPlayer(yt.fetch), timeoutMs: 50, clients: [Client.VisionOS] });
+    const error = await rejection(ytdl.getInfo(ID));
+
+    expect(error.code).toBe("REQUEST_FAILED");
+    expect(causes(error).some((cause) => cause instanceof DOMException && cause.name === "TimeoutError")).toBe(true);
+  });
+
+  test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "timeoutMs %p throws INVALID_ARGUMENT before any request",
+    (timeoutMs) => {
+      const yt = fakeYouTube({ player: () => playable(ID) });
+      expect(() => new Ytdl({ fetch: yt.fetch, timeoutMs })).toThrow(
+        expect.objectContaining({ code: "INVALID_ARGUMENT" }),
+      );
+      expect(yt.requests).toHaveLength(0);
+    },
+  );
+});
