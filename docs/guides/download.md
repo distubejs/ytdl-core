@@ -1,6 +1,8 @@
 ---
 title: Download
 description: Stream a format as a Node or web stream, with ranges, progress and cancellation.
+sidebar:
+  order: 6
 ---
 
 `download` returns a Node `Readable`:

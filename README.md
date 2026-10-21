@@ -2,7 +2,7 @@
 
 YouTube video info and downloads for Node.js. A DisTube fork of `ytdl-core`.
 
-**[Documentation](https://distubejs.github.io/ytdl-core/)** · [Getting started](https://distubejs.github.io/ytdl-core/getting-started/) · [API reference](https://distubejs.github.io/ytdl-core/api/readme/)
+**[Documentation](https://distube.js.org/ytdl-core/)** · [Getting started](https://distube.js.org/ytdl-core/guides/getting-started/) · [API reference](https://distube.js.org/ytdl-core/api/readme/)
 
 <a href='https://ko-fi.com/skick' target='_blank'><img height='48' src='https://storage.ko-fi.com/cdn/kofi3.png' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
@@ -49,7 +49,7 @@ const playlist = await yt.getPlaylist("https://www.youtube.com/playlist?list=PL2
 console.log(first?.title, playlist.videos.length);
 ```
 
-Search, formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distubejs.github.io/ytdl-core/).
+Search, formats, live streams, clients, cookies, PO tokens, proxies and errors are covered in the [documentation](https://distube.js.org/ytdl-core/).
 
 ## Development
 

@@ -1,6 +1,8 @@
 ---
 title: Clients
 description: Which YouTube clients ytdl-core asks, and what each one plays.
+sidebar:
+  order: 9
 ---
 
 YouTube answers each of its apps differently: one plays age-restricted videos, another plays live streams, another needs a PO token. `Ytdl` asks the clients in `clients` in order, and the first one that plays wins.

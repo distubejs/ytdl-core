@@ -5,7 +5,7 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "ignorePatterns": ["dist", "coverage", "tests/fixtures", "docs/.astro", "docs/src/content/docs/api"],
+  "ignorePatterns": ["dist", "coverage", "tests/fixtures"],
   "rules": {
     "unicorn/require-post-message-target-origin": "off"
   }

@@ -53,3 +53,50 @@ jobs:
             npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public
             npm deprecate "@distube/ytdl-core@<$TAG" "This version is deprecated, please upgrade to the latest version."
           fi
+
+  docs:
+    name: Publish versioned docs
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - uses: actions/checkout@v5
+        with:
+          repository: distubejs/distubejs.github.io
+          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+          path: site
+
+      - run: bun install --frozen-lockfile
+        working-directory: site
+
+      - run: bun site/scripts/snapshot.ts . site/snapshots --docs docs
+
+      - name: Commit and push
+        working-directory: site
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "$TAG"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            git fetch origin main
+            git rebase origin/main
+          done
+          git push

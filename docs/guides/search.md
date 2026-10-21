@@ -1,6 +1,8 @@
 ---
 title: Search
 description: Search videos, list related videos and get search suggestions.
+sidebar:
+  order: 4
 ---
 
 Search results, playlist entries and related videos are all [`VideoSummary`](../../api/interfaces/videosummary/) values:

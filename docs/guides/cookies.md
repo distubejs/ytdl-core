@@ -1,6 +1,8 @@
 ---
 title: Cookies
 description: Sign in with a cookie for age-restricted videos.
+sidebar:
+  order: 10
 ---
 
 :::caution

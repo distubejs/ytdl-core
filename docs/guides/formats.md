@@ -1,6 +1,8 @@
 ---
 title: Choose a format
 description: Pick a format by quality, itag or your own filter.
+sidebar:
+  order: 7
 ---
 
 `download` picks one format with `quality` and `filter`. `chooseFormat` does the same on a list, so you can inspect the choice first:

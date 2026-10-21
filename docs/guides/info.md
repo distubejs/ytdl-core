@@ -1,6 +1,8 @@
 ---
 title: Get info
 description: Read a video's details, formats and related videos.
+sidebar:
+  order: 2
 ---
 
 ```ts

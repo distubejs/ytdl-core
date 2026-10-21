@@ -1,6 +1,8 @@
 ---
 title: Captions
 description: List a video's caption tracks and fetch their text.
+sidebar:
+  order: 3
 ---
 
 `getInfo` lists the tracks:

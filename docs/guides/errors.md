@@ -1,6 +1,8 @@
 ---
 title: Errors
 description: Handle failures by their code.
+sidebar:
+  order: 13
 ---
 
 Every failure is a `YtdlError` with a `code`. Switch on the code, not the message:

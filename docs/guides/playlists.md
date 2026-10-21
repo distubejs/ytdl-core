@@ -1,6 +1,8 @@
 ---
 title: Playlists
 description: Expand playlists and parse playlist IDs.
+sidebar:
+  order: 5
 ---
 
 ```ts

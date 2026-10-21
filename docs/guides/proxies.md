@@ -1,6 +1,8 @@
 ---
 title: Proxies
 description: Route every request through a proxy or a local address.
+sidebar:
+  order: 12
 ---
 
 Every request goes through the `fetch` option, so a proxy is a fetch with a dispatcher:

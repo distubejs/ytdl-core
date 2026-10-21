@@ -1,5 +1,5 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 120,
-  "ignorePatterns": ["dist", "coverage", "tests/fixtures", "docs/.astro", "docs/src/content/docs/api"]
+  "ignorePatterns": ["dist", "coverage", "tests/fixtures"]
 }

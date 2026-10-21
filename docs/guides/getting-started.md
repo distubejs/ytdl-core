@@ -1,28 +1,19 @@
 ---
 title: Getting started
 description: Install ytdl-core and download your first video.
+sidebar:
+  order: 1
 ---
 
-import { TabItem, Tabs } from "@astrojs/starlight/components";
-
 ## Install
-
-<Tabs syncKey="package-manager">
-  <TabItem label="npm">
 
 ```bash
 npm install @distube/ytdl-core
 ```
 
-  </TabItem>
-  <TabItem label="bun">
-
 ```bash
 bun add @distube/ytdl-core
 ```
-
-  </TabItem>
-</Tabs>
 
 ytdl-core runs on Node.js 22.12 or later, and on Bun.
 
@@ -54,11 +45,11 @@ const yt = new Ytdl({
 });
 ```
 
-All options are listed in [`YtdlOptions`](../api/interfaces/ytdloptions/).
+All options are listed in [`YtdlOptions`](../../api/interfaces/ytdloptions/).
 
 ## Next steps
 
-- [Get info](../guides/info/) about a video
-- [Download](../guides/download/) with ranges, progress and cancellation
-- [Choose a format](../guides/formats/)
-- Pick the [clients](../guides/clients/) to ask
+- [Get info](../info/) about a video
+- [Download](../download/) with ranges, progress and cancellation
+- [Choose a format](../formats/)
+- Pick the [clients](../clients/) to ask

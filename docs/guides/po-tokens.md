@@ -1,6 +1,8 @@
 ---
 title: PO tokens
 description: Mint proof-of-origin tokens for the clients that need them.
+sidebar:
+  order: 11
 ---
 
 Some [clients](../clients/) only play with a proof-of-origin (PO) token. Without `getPoToken`, `Ytdl` skips them.

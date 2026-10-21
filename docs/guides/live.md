@@ -1,6 +1,8 @@
 ---
 title: Live streams
 description: Stream a live broadcast over HLS or DASH.
+sidebar:
+  order: 8
 ---
 
 A live video lists two kinds of format:
