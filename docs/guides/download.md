@@ -11,8 +11,12 @@ sidebar:
 import { createWriteStream } from "node:fs";
 import { Quality } from "@distube/ytdl-core";
 
-yt.download(url, { quality: Quality.Highest }).pipe(createWriteStream("video.mp4"));
+yt.download(url, { quality: Quality.HighestAudio, filter: { hasAudio: true, hasVideo: false } }).pipe(
+  createWriteStream("audio.webm"),
+);
 ```
+
+Most clients answer with separate audio and video formats, so `Quality.Highest` can pick video without audio. Joining the two needs a muxer such as ffmpeg.
 
 Pass the info you already have to skip a second lookup. Info that has not expired is reused as is:
 

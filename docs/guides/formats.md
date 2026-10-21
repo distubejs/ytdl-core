@@ -20,7 +20,7 @@ It throws `NO_FORMAT` when nothing matches.
 
 ## Quality
 
-`quality` is a `Quality` value, an itag, or a list of itags tried in order. The default is `Quality.Highest`.
+`quality` is a `Quality` value, an itag, or a list of itags tried in order. The default is `Quality.Highest`. Most clients answer with separate audio and video formats, so it can pick video without audio; joining the two needs a muxer such as ffmpeg.
 
 ```ts
 yt.download(info, { quality: Quality.LowestAudio });
