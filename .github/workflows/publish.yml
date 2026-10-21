@@ -1,6 +1,7 @@
 name: Publish
 # Tag a verified commit with its package.json version (for example `5.0.0`). CI verifies, packs and
-# publishes it with provenance, then deprecates older versions; a prerelease goes to the `next` tag.
+# publishes it with provenance through npm trusted publishing; a prerelease goes to the `next` tag.
+# Trusted publishing cannot run `npm deprecate`, so a maintainer deprecates an old major by hand with 2FA.
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
@@ -21,7 +22,7 @@ jobs:
       # npm publish is the only publisher that supports --provenance (oven-sh/bun#15601).
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - name: Check the tag matches package.json
@@ -44,14 +45,12 @@ jobs:
 
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           if [[ "$TAG" == *-* ]]; then
             npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public --tag next
           else
             npm publish "$RUNNER_TEMP"/*.tgz --provenance --access public
-            npm deprecate "@distube/ytdl-core@<$TAG" "This version is deprecated, please upgrade to the latest version."
           fi
 
   docs:
