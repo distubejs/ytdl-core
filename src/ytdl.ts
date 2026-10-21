@@ -102,7 +102,7 @@ export class Ytdl {
     if (planClients({ clients, ...credentials }, new Map(), 0).length === 0) {
       throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie or getPoToken this instance lacks");
     }
-    const fetcher = timed(options.fetch ?? globalThis.fetch.bind(globalThis), timeoutMs);
+    const fetcher = timed(consented(options.fetch ?? globalThis.fetch.bind(globalThis)), timeoutMs);
     this.#innertube = new InnerTube({ fetch: fetcher, lang: options.lang, country: options.country });
     const auth = options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher });
     const { getPoToken } = options;
@@ -296,4 +296,17 @@ export class Ytdl {
     );
     return [...parseHlsMaster(playlist, resolution.hlsManifestUrl, resolution.client), ...resolution.formats];
   }
+}
+
+const YOUTUBE_HOST = /(?:^|\.)youtube\.com$/u;
+
+// Without the SOCS consent cookie, YouTube may answer a logged-out request from the EU with a consent page.
+function consented(fetchFn: typeof fetch): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const headers = new Headers(init?.headers);
+    if (!YOUTUBE_HOST.test(url.hostname) || headers.has("Cookie")) return fetchFn(input, init);
+    headers.set("Cookie", "SOCS=CAI");
+    return fetchFn(input, { ...init, headers });
+  }) as typeof fetch;
 }

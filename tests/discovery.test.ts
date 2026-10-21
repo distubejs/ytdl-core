@@ -391,7 +391,7 @@ describe("discovery session", () => {
     expect(headers.get("X-Goog-Visitor-Id")).toBe("VISITOR-1");
   });
 
-  test("a signed-in instance searches with its visitor data and without the account", async () => {
+  test("a signed-in instance searches with its visitor data and the consent cookie, without the account", async () => {
     const { yt, ytdl } = setup(
       { [SEARCH]: pages(SEARCH_PAGE) },
       { cookie: "SID=account-sid-value; SAPISID=sapisid-value-aaaa" },
@@ -401,7 +401,7 @@ describe("discovery session", () => {
 
     const headers = new Headers(yt.requests.find((request) => request.url === SEARCH)?.init?.headers);
     expect(headers.get("X-Goog-Visitor-Id")).toBe("VISITOR-1");
-    expect(headers.get("Cookie")).toBeNull();
+    expect(headers.get("Cookie")).toBe("SOCS=CAI");
     expect(headers.get("Authorization")).toBeNull();
   });
 });

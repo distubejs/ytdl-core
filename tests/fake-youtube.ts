@@ -32,6 +32,8 @@ export function fakeYouTube(options: FakeOptions) {
     const url = String(input instanceof Request ? input.url : input);
     requests.push({ url, init });
     init?.signal?.throwIfAborted();
+    const route = options.routes?.[url.split("&range=")[0] ?? url];
+    if (route) return route();
     if (url === "https://www.youtube.com/sw.js_data") {
       visitors++;
       const data = [
@@ -68,8 +70,6 @@ export function fakeYouTube(options: FakeOptions) {
       const { url: target } = JSON.parse(String(init?.body)) as { url: string };
       return options.resolveUrl?.(target) ?? new Response("not found", { status: 404 });
     }
-    const route = options.routes?.[url.split("&range=")[0] ?? url];
-    if (route) return route();
     return options.media?.(new URL(url)) ?? new Response("not found", { status: 404 });
   };
   return {

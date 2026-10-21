@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { BLOCK_PERIOD_MS, planClients } from "../src/resolve.ts";
 import { Client, DEFAULT_CLIENTS, Ytdl, YtdlError } from "../src/index.ts";
 import type { RetryEvent } from "../src/index.ts";
@@ -23,6 +23,11 @@ const order = (cookie: boolean, poToken: boolean) =>
   planClients({ clients: DEFAULT_CLIENTS, cookie, poToken }, new Map(), 0).map(
     (rung) => `${rung.client}${rung.signedIn ? "+" : ""}`,
   );
+
+const cookies = (yt: ReturnType<typeof fakeYouTube>, pattern: RegExp) =>
+  yt.requests
+    .filter((request) => pattern.test(request.url))
+    .map((request) => new Headers(request.init?.headers).get("Cookie"));
 
 async function rejection(promise: Promise<unknown>): Promise<YtdlError> {
   const error = await promise.then(
@@ -435,6 +440,62 @@ describe("input and cancellation", () => {
       .catch((caught: unknown) => caught);
     expect(error).toBe(reason);
     expect(yt.clients()).toEqual([VISIONOS]);
+  });
+});
+
+describe("consent cookie", () => {
+  test("logged-out YouTube requests carry SOCS=CAI and media requests carry no cookie", async () => {
+    const content = Uint8Array.from({ length: 4000 }, (_, index) => index % 256);
+    const yt = fakeYouTube({
+      player: ({ client }) => (client === VISIONOS ? unplayable("UNPLAYABLE", "") : ciphered(ID)),
+      media: (url) => {
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        return new Response(content.slice(start, end + 1));
+      },
+    });
+
+    const stream = new Ytdl({ fetch: yt.fetch, playerId: "c0de0001" }).download(ID);
+
+    expect(Buffer.concat(await stream.toArray())).toEqual(Buffer.from(content));
+    expect(cookies(yt, /\/sw\.js_data$/u)).toEqual(["SOCS=CAI"]);
+    expect(cookies(yt, /\/embed\//u)).toEqual(["SOCS=CAI"]);
+    expect(cookies(yt, /\/s\/player\/c0de0001\//u)).toEqual(["SOCS=CAI"]);
+    expect(new Set(cookies(yt, /\/youtubei\/v1\/player/u))).toEqual(new Set(["SOCS=CAI"]));
+    const media = cookies(yt, /^https:\/\/[^/]+\.googlevideo\.com\//u);
+    expect(media.length).toBeGreaterThan(0);
+    expect(new Set(media)).toEqual(new Set([null]));
+  });
+
+  test("player discovery carries SOCS=CAI", async () => {
+    const yt = fakeYouTube({
+      player: () => ciphered(ID),
+      routes: { "https://www.youtube.com/iframe_api": () => new Response("no player here") },
+    });
+    setSystemTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    try {
+      await rejection(new Ytdl({ fetch: yt.fetch, clients: [Client.WebEmbedded] }).getInfo(ID));
+    } finally {
+      setSystemTime();
+    }
+
+    expect(cookies(yt, /\/iframe_api$/u)).toEqual(["SOCS=CAI"]);
+  });
+
+  test("a signed-in rung sends the account cookie alone", async () => {
+    const account = "SID=account-sid-value; SAPISID=sapisid-value-aaaa";
+    const yt = fakeYouTube({
+      player: ({ headers }) => (headers.has("Authorization") ? playable(ID) : unplayable("LOGIN_REQUIRED", "")),
+      routes: { "https://www.youtube.com/": () => new Response('ytcfg.set({"LOGGED_IN":true});') },
+    });
+
+    await new Ytdl({ cookie: account, fetch: yt.fetch, playerId: PLAYER_ID, clients: [Client.WebEmbedded] }).getInfo(
+      ID,
+    );
+
+    expect(cookies(yt, /^https:\/\/www\.youtube\.com\/$/u)).toEqual([account]);
+    expect(
+      yt.playerCalls.filter((call) => call.headers.has("Authorization")).map((call) => call.headers.get("Cookie")),
+    ).toEqual([account]);
   });
 });
 
