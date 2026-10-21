@@ -439,11 +439,6 @@ export function sameFormat(a: FormatMetadata, b: FormatMetadata): boolean {
   return a.itag === b.itag && a.isDrc === b.isDrc && a.audioTrack?.id === b.audioTrack?.id;
 }
 
-function preferring<T>(list: readonly T[], keep: (item: T) => boolean): readonly T[] {
-  const kept = list.filter(keep);
-  return kept.length > 0 ? kept : list;
-}
-
 function lengthDelimitedFields(bytes: Uint8Array): [number, Uint8Array][] {
   const fields: [number, Uint8Array][] = [];
   let offset = 0;
@@ -483,6 +478,13 @@ function isDubbed(format: FormatMetadata): boolean {
   return content !== undefined && content !== "original";
 }
 
+const PREFERENCE: readonly ((format: VideoFormat) => boolean)[] = [
+  (format) => !format.isDrc && !isDubbed(format),
+  (format) => !isDubbed(format),
+  (format) => !format.isDrc,
+  () => true,
+];
+
 /**
  * Filters, then picks by quality. A filter list picks with its first entry that yields a format. An
  * explicit `format` is matched in `formats`, so a fresh list's URL replaces a stale one. A DRC variant
@@ -496,14 +498,10 @@ export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFor
   const quality = options.quality ?? "highest";
   for (const matches of matchers(options.filter)) {
     const matching = playable.filter(matches);
-    const chosen = pick(
-      preferring(
-        preferring(matching, (format) => !format.isDrc),
-        (format) => !isDubbed(format),
-      ),
-      quality,
-    );
-    if (chosen) return chosen;
+    for (const preferred of PREFERENCE) {
+      const chosen = pick(matching.filter(preferred), quality);
+      if (chosen) return chosen;
+    }
   }
   throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
 }

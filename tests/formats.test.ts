@@ -155,6 +155,11 @@ describe("stable-volume variants", () => {
     expect(chooseFormat(withDrc, { quality: drc.itag })).toBe(original);
   });
 
+  test("an itag only a DRC copy carries picks the copy", () => {
+    const onlyDrc = withDrc.filter((format) => format !== original);
+    expect(chooseFormat(onlyDrc, { quality: drc.itag })).toBe(drc);
+  });
+
   test("an explicit DRC format resolves to the DRC entry of a fresh list", () => {
     const fresh = withDrc.map((format) => ({ ...format, url: `${format.url}&fresh=1` }));
     const chosen = chooseFormat(fresh, { format: drc });
@@ -192,6 +197,18 @@ describe("dubbed audio tracks", () => {
 
   test("a dub is picked when the list has no original", () => {
     expect(chooseFormat([dub, otherDub], { quality: "highestaudio" })).toBe(dub);
+  });
+
+  test.each([
+    ["itag 251 beside an original itag 140", [audio(140, "mp4", "mp4a.40.2", 128)], 251],
+    ["highest audio", [], Quality.HighestAudio],
+  ] as const)("%s picks the original-language DRC copy over a dub", (_, others, quality) => {
+    const originalDrc = { ...original, isDrc: true };
+    expect(chooseFormat([dub, originalDrc, ...others], { quality })).toBe(originalDrc);
+  });
+
+  test("an itag only a dub carries picks the dub", () => {
+    expect(chooseFormat([audio(140, "mp4", "mp4a.40.2", 128), dub], { quality: 251 })).toBe(dub);
   });
 
   test("an explicit dub format resolves to its own entry", () => {
