@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Ytdl, YtdlError } from "../src/index.ts";
 import type { DownloadOptions, PoTokenRequest, ProgressEvent, RetryEvent, VideoInfo } from "../src/index.ts";
-import { audioFormat, fakeYouTube, type FakeOptions, playable } from "./fake-youtube.ts";
+import { audioFormat, fakeYouTube, type FakeOptions, playable, VISIONOS, WEB_EMBEDDED } from "./fake-youtube.ts";
 import { type SabrFormatSpec, sabrPlayable, sabrServer, type SabrServerOptions } from "./fake-sabr.ts";
 
 const ID = "aqz-KE-bpKQ";
@@ -303,6 +303,31 @@ describe("SABR delivery", () => {
     expect(error).toMatchObject({ code: "REQUEST_FAILED" });
     expect(retries.map((retry) => retry.attempt)).toEqual([1, 2, 3]);
   });
+
+  test("a VISIONOS session that keeps answering 403 moves to WEB_EMBEDDED on the second resume with the exact bytes", async () => {
+    const yt = fakeYouTube({
+      player: ({ client }) => {
+        const answer = sabrPlayable(ID, FORMATS) as { streamingData: { serverAbrStreamingUrl: string } };
+        if (client === VISIONOS) answer.streamingData.serverAbrStreamingUrl += "&c=visionos";
+        return answer;
+      },
+    });
+    const served = sabrServer({ formats: FORMATS }).fetch(yt.fetch);
+    const fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.searchParams.get("c") === "visionos") return Promise.resolve(new Response("", { status: 403 }));
+      return served(input, init);
+    }) as typeof globalThis.fetch;
+
+    const { body, retries } = await download(new Ytdl({ fetch, playerId: PLAYER_ID }), { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes));
+    expect(retries).toEqual([
+      { attempt: 1, client: "visionos", reason: "HTTP 403" },
+      { attempt: 2, client: "visionos", reason: "HTTP 403" },
+    ]);
+    expect(yt.clients()).toEqual([VISIONOS, VISIONOS, WEB_EMBEDDED]);
+  }, 15_000);
 
   test("an onProgress that throws ends the stream once with its error, without a retry or a gap", async () => {
     const listenerFailure = new Error("listener failed");

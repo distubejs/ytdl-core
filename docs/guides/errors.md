@@ -21,6 +21,8 @@ try {
 
 `getCaptions` rejects with `NO_CAPTIONS` when the video has no track in the language you asked for, and the message lists the languages it has.
 
+During a download, a SABR stream that fails after YouTube answers a media request with HTTP 403 resumes. `onRetry` receives `reason: "HTTP 403"`, and from the second retry the failed client is skipped, so a persistent 403 moves the download to the next client.
+
 A download stream emits the same errors as an `error` event, or rejects its reads for a web stream.
 
 Every code and what it means is listed in [`YtdlErrorCode`](../../api/enumerations/ytdlerrorcode/).

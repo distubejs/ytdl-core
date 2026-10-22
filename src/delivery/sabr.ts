@@ -97,12 +97,16 @@ export async function* readSabr(
     const client = CLIENTS[format.client];
     const mint = delivery.mintPoToken;
     let mintFailure: unknown;
+    let lastStatus: number | undefined;
     const stream = new SabrStream({
       videoId: info.videoDetails.id,
-      fetchFunction: ((url: string | URL | Request, init?: RequestInit) => {
+      fetchFunction: (async (url: string | URL | Request, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
         for (const [name, value] of Object.entries(userAgentHeader(format.client))) headers.set(name, value);
-        return delivery.fetch(url, { ...init, headers });
+        lastStatus = undefined;
+        const response = await delivery.fetch(url, { ...init, headers });
+        lastStatus = response.status;
+        return response;
       }) as typeof fetch,
       serverAbrStreamingUrl: source.url,
       videoPlaybackUstreamerConfig: source.config,
@@ -221,7 +225,7 @@ export async function* readSabr(
     const failed = new YtdlError("REQUEST_FAILED", `itag ${format.itag}: SABR session failed: ${reason}`, {
       cause: failure,
     });
-    await session.resume("SABR session failed", failed);
+    await session.resume(lastStatus === 403 ? "HTTP 403" : "SABR session failed", failed);
     if (session.format.url !== undefined) return switched(failed);
   }
 }
