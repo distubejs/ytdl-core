@@ -24,11 +24,14 @@ export interface FakeOptions {
   readonly media?: (url: URL) => Response | undefined;
 }
 
+export const REQUEST_BUDGET = 2000;
+
 export function fakeYouTube(options: FakeOptions) {
   const requests: { readonly url: string; readonly init: RequestInit | undefined }[] = [];
   const playerCalls: PlayerCall[] = [];
   let visitors = 0;
   const fetchFake = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (requests.length >= REQUEST_BUDGET) throw new Error("fake request budget exceeded");
     const url = String(input instanceof Request ? input.url : input);
     requests.push({ url, init });
     init?.signal?.throwIfAborted();
@@ -56,9 +59,9 @@ export function fakeYouTube(options: FakeOptions) {
     }
     if (url.startsWith("https://www.youtube.com/youtubei/v1/player")) {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      const client = body.context as { client: { clientName: string; clientVersion: string } };
+      const context = body.context as { client: { clientName: string } };
       const call = {
-        client: `${client.client.clientName} ${client.client.clientVersion}`,
+        client: context.client.clientName,
         body,
         headers: new Headers(init?.headers),
       };
@@ -76,15 +79,15 @@ export function fakeYouTube(options: FakeOptions) {
     fetch: fetchFake as typeof fetch,
     requests,
     playerCalls,
-    clients: () => playerCalls.map((call) => call.client).filter((client) => !client.startsWith("WEB ")),
+    clients: () => playerCalls.map((call) => call.client).filter((client) => client !== "WEB"),
     visitorFetches: () => visitors,
   };
 }
 
-export const VISIONOS = "VISIONOS 1.02";
-export const TV = "TVHTML5 5.20260707";
-export const WEB_EMBEDDED = "WEB_EMBEDDED_PLAYER 2.20260708.00.00";
-export const MWEB = "MWEB 2.20260708.05.00";
+export const VISIONOS = "VISIONOS";
+export const TV = "TVHTML5";
+export const WEB_EMBEDDED = "WEB_EMBEDDED_PLAYER";
+export const MWEB = "MWEB";
 
 const details = (videoId: string, extra: Record<string, unknown> = {}) => ({
   videoId,

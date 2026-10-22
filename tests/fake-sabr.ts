@@ -8,7 +8,7 @@ import {
 } from "googlevideo/protos";
 import { CompositeBuffer, UmpWriter } from "googlevideo/ump";
 import { EnabledTrackTypes } from "googlevideo/utils";
-import { playable } from "./fake-youtube.ts";
+import { playable, REQUEST_BUDGET } from "./fake-youtube.ts";
 
 export const SABR_URL = "https://rr2---sn-test.googlevideo.com/videoplayback?sabr=1&expire=4102444800&n=xyz";
 // YouTube's ustreamer config identifies the video; MEDIA_HEADER and FORMAT_INITIALIZATION_METADATA echo its id.
@@ -141,6 +141,7 @@ export function sabrServer(options: SabrServerOptions) {
   }));
 
   async function answer(request: Request): Promise<Response> {
+    if (requests.length >= REQUEST_BUDGET) throw new Error("fake request budget exceeded");
     const url = new URL(request.url);
     const body = VideoPlaybackAbrRequest.decode(new Uint8Array(await request.arrayBuffer()));
     const selected = [...body.selectedAudioFormatIds, ...body.selectedVideoFormatIds];

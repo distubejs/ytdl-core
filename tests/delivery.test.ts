@@ -6,6 +6,7 @@ import type { Delivery, ReadOptions, ResumeRequest } from "../src/delivery/index
 import type { ProgressEvent, RetryEvent } from "../src/delivery/index.ts";
 import type { VideoFormat } from "../src/formats.ts";
 import type { VideoInfo } from "../src/info.ts";
+import { REQUEST_BUDGET } from "./fake-youtube.ts";
 
 const SOURCE = pseudoRandomBytes(5500);
 
@@ -32,9 +33,12 @@ interface MediaRequest {
 type Handler = (request: MediaRequest) => Response | Promise<Response> | undefined;
 
 /** Serves `content` honoring `range=start-end`; `handler` overrides single answers. */
-function mediaServer(content: Uint8Array, handler?: Handler) {
+const MEDIA_BUDGET = 200;
+
+function mediaServer(content: Uint8Array, handler?: Handler, budget = MEDIA_BUDGET) {
   const requests: MediaRequest[] = [];
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (requests.length >= budget) throw new Error("fake request budget exceeded");
     const url = new URL(String(input));
     const [start = 0, end = content.length - 1] = (url.searchParams.get("range") ?? "").split("-").map(Number);
     const signal = init?.signal ?? new AbortController().signal;
@@ -43,6 +47,14 @@ function mediaServer(content: Uint8Array, handler?: Handler) {
     return (await handler?.(request)) ?? new Response(content.slice(start, end + 1));
   };
   return { requests, fetch: fetch as typeof globalThis.fetch };
+}
+
+function budgeted(fetch: typeof globalThis.fetch, budget: number): typeof globalThis.fetch {
+  let calls = 0;
+  return ((input, init) => {
+    if (++calls > budget) throw new Error("fake request budget exceeded");
+    return fetch(input, init);
+  }) as typeof globalThis.fetch;
 }
 
 function format(generation: number, overrides: Partial<VideoFormat> = {}): VideoFormat {
@@ -84,6 +96,7 @@ function setup({ fetch, options = {}, resume, ...rest }: Setup) {
   const delivery: Delivery = {
     fetch,
     resume: async (request) => {
+      if (resumes.length >= REQUEST_BUDGET) throw new Error("fake resume budget exceeded");
       resumes.push(request);
       if (resume) return resume(request);
       generation++;
@@ -646,6 +659,8 @@ describe("live delivery", () => {
   });
 });
 
+const DASH_BUDGET = 10_000;
+
 /** A live DASH origin: segments 10 ms long; `sq=head+1` waits for the next segment until `last`. */
 function dashOrigin({
   head = 20,
@@ -654,13 +669,17 @@ function dashOrigin({
   answer = (_sq: number): Response | undefined => undefined,
 } = {}) {
   const state = { head };
-  const server = mediaServer(new Uint8Array(), ({ url }) => {
-    const sq = Number(url.searchParams.get("sq"));
-    if (sq === state.head + 1 && state.head < last) state.head++;
-    const headers = { "x-head-seqnum": String(state.head), "x-head-time-millis": String(state.head * 10) };
-    if (sq < Math.max(1, oldest()) || sq > state.head) return new Response(null, { status: 404, headers });
-    return answer(sq) ?? new Response(`${sq},`, { headers });
-  });
+  const server = mediaServer(
+    new Uint8Array(),
+    ({ url }) => {
+      const sq = Number(url.searchParams.get("sq"));
+      if (sq === state.head + 1 && state.head < last) state.head++;
+      const headers = { "x-head-seqnum": String(state.head), "x-head-time-millis": String(state.head * 10) };
+      if (sq < Math.max(1, oldest()) || sq > state.head) return new Response(null, { status: 404, headers });
+      return answer(sq) ?? new Response(`${sq},`, { headers });
+    },
+    DASH_BUDGET,
+  );
   return { state, server };
 }
 
@@ -695,13 +714,16 @@ describe("live DASH delivery", () => {
   test("a stall shorter than 30 s keeps polling and emits the segments that follow", async () => {
     const { server } = dashOrigin();
     let startedAt: number | undefined;
-    const stalling = (async (input: string | URL | Request, init?: RequestInit) => {
-      const elapsed = Date.now() - (startedAt ??= Date.now());
-      if (new URL(String(input)).searchParams.get("sq") === "21" && elapsed < 25_000) {
-        return new Response(null, { status: 404, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } });
-      }
-      return server.fetch(input, init);
-    }) as typeof globalThis.fetch;
+    const stalling = budgeted(
+      (async (input: string | URL | Request, init?: RequestInit) => {
+        const elapsed = Date.now() - (startedAt ??= Date.now());
+        if (new URL(String(input)).searchParams.get("sq") === "21" && elapsed < 25_000) {
+          return new Response(null, { status: 404, headers: { "x-head-seqnum": "20", "x-head-time-millis": "200" } });
+        }
+        return server.fetch(input, init);
+      }) as typeof globalThis.fetch,
+      DASH_BUDGET,
+    );
     const { data, errors } = await collectLive(dashSetup(stalling).input);
 
     expect(errors).toEqual([]);
