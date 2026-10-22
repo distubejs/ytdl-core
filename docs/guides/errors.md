@@ -54,7 +54,7 @@ for (const { client, signedIn, step, code, reason, cause } of error.attempts) {
 | `po-token`    | calling your `getPoToken`                                       |
 | `request`     | sending the InnerTube `/player` request                         |
 | `playability` | reading YouTube's verdict, such as private, region or bot check |
-| `formats`     | finding a playable format                                       |
+| `formats`     | finding a playable format, or the exact file a resume asked for |
 | `solve`       | solving the signature and `n` parameter of the URLs             |
 
 The step tells a library failure from a verdict about the video. A rung that fails at `player` or `solve` says nothing about whether the video is age-restricted, and its `cause` names the error.

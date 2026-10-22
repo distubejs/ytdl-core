@@ -6,9 +6,20 @@ import type { Delivery, ReadOptions, ResumeRequest } from "../src/delivery/index
 import type { ProgressEvent, RetryEvent } from "../src/delivery/index.ts";
 import type { VideoFormat } from "../src/formats.ts";
 import type { VideoInfo } from "../src/info.ts";
-import { REQUEST_BUDGET } from "./fake-youtube.ts";
+import { Client, Ytdl } from "../src/index.ts";
+import {
+  audioFormat,
+  fakeYouTube,
+  MEDIA_HOST,
+  playable,
+  REQUEST_BUDGET,
+  TV,
+  VISIONOS,
+  WEB_EMBEDDED,
+} from "./fake-youtube.ts";
 
 const SOURCE = pseudoRandomBytes(5500);
+const VIDEO_ID = "aqz-KE-bpKQ";
 
 function pseudoRandomBytes(length: number): Uint8Array {
   const out = new Uint8Array(length);
@@ -652,6 +663,43 @@ describe("ranged delivery", () => {
     expect(data).toEqual(SOURCE.slice(1000, 2000));
     expect(cancelled).toBe(true);
     expect(server.requests).toHaveLength(1);
+  });
+});
+
+describe("resume through the resolver", () => {
+  test("a client listing the itag as another file is skipped and a later client serving the same file continues", async () => {
+    const served: string[] = [];
+    const answer = (client: string, contentLength: number) =>
+      playable(VIDEO_ID, [
+        audioFormat(251, {
+          url: `${MEDIA_HOST}?itag=251&expire=4102444800&c=${client}`,
+          contentLength: String(contentLength),
+        }),
+      ]);
+    const yt = fakeYouTube({
+      player: ({ client }) => answer(client, client === TV ? SOURCE.length - 1 : SOURCE.length),
+      media: (url) => {
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        const client = url.searchParams.get("c") ?? "";
+        served.push(client);
+        if (client === VISIONOS && start >= 1000) return forbidden();
+        return new Response(SOURCE.slice(start, end + 1));
+      },
+    });
+    const retries: RetryEvent[] = [];
+    const ytdl = new Ytdl({ fetch: yt.fetch, clients: [Client.VisionOS, Client.Tv, Client.WebEmbedded] });
+
+    const { data, errors } = await collectNode(
+      ytdl.download(VIDEO_ID, { chunkSize: 1000, onRetry: (event) => retries.push(event) }),
+    );
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(retries).toEqual([
+      { attempt: 1, client: "visionos", reason: "HTTP 403" },
+      { attempt: 2, client: "visionos", reason: "HTTP 403" },
+    ]);
+    expect([...new Set(served)]).toEqual([VISIONOS, WEB_EMBEDDED]);
   });
 });
 

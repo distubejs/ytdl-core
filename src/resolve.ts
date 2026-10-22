@@ -269,8 +269,17 @@ export class Resolver {
         return { step, code: "NO_FORMAT", reason: `${client.name} returned no downloadable format` };
       }
       const wanted = options.format;
-      if (wanted && !wanted.isHLS && !raw.some((format) => sameFormat(format.metadata, wanted))) {
-        return { step, code: "NO_FORMAT", reason: `${client.name} does not offer itag ${wanted.itag}` };
+      if (wanted && !wanted.isHLS) {
+        const offered = raw.filter((format) => sameFormat(format.metadata, wanted));
+        if (offered.length === 0) {
+          return { step, code: "NO_FORMAT", reason: `${client.name} does not offer itag ${wanted.itag}` };
+        }
+        if (
+          wanted.contentLength !== undefined &&
+          !offered.some((format) => format.metadata.contentLength === wanted.contentLength)
+        ) {
+          return { step, code: "NO_FORMAT", reason: `${client.name} serves another file as itag ${wanted.itag}` };
+        }
       }
       step = "solve";
       const session = raw.some((format) => !format.url && !format.signatureCipher) ? sabrSession(response) : undefined;
