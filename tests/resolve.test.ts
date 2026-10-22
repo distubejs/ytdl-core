@@ -1,13 +1,15 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
 import { planClients } from "../src/resolve.ts";
 import { Client, DEFAULT_CLIENTS, Ytdl, YtdlError } from "../src/index.ts";
-import type { RetryEvent } from "../src/index.ts";
+import type { RetryEvent, YtdlOptions } from "../src/index.ts";
 import {
   audioFormat,
   ciphered,
   fakeYouTube,
   MEDIA_HOST,
   MWEB,
+  type PlayerHandler,
+  PLAYER_JS,
   playable,
   SIGNATURE_TIMESTAMP,
   TV,
@@ -404,18 +406,6 @@ describe("outcomes", () => {
     expect(error.startTime).toEqual(new Date(start * 1000));
   });
 
-  test("a region block carries the allowed countries", async () => {
-    const yt = fakeYouTube({
-      player: () => ({
-        ...unplayable("UNPLAYABLE", "The uploader has not made this video available in your country"),
-        microformat: { playerMicroformatRenderer: { availableCountries: ["DE", "FR"] } },
-      }),
-    });
-    const error = await rejection(new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID }).getInfo(ID));
-    expect(error.code).toBe("REGION_BLOCKED");
-    expect(error.availableCountries).toEqual(["DE", "FR"]);
-  });
-
   test("a format URL without an expiry stays fresh for five hours", async () => {
     setSystemTime(new Date(NOW));
     try {
@@ -426,6 +416,154 @@ describe("outcomes", () => {
       setSystemTime();
     }
   });
+});
+
+const playerScript = (id: string) => `https://www.youtube.com/s/player/${id}/player_ias.vflset/en_US/base.js`;
+const REGION_REASON = "The uploader has not made this video available in your country";
+const countries = (list: readonly string[]) => ({
+  microformat: { playerMicroformatRenderer: { availableCountries: list } },
+});
+
+interface AttributionCase {
+  readonly clients?: readonly Client[];
+  readonly playerId?: string;
+  readonly options?: Pick<YtdlOptions, "cookie" | "getPoToken">;
+  readonly player: PlayerHandler;
+  readonly routes?: Record<string, () => Response>;
+  readonly cookieHint?: boolean;
+  readonly metadataRequests?: number;
+  readonly error: Record<string, unknown>;
+}
+
+describe("attempt attribution", () => {
+  const cases: Record<string, AttributionCase> = {
+    "a broken player is not reported as an age gate": {
+      playerId: "f0000001",
+      routes: { [playerScript("f0000001")]: () => new Response(PLAYER_JS.replace('d.set("alr","yes");', "")) },
+      player: ({ client }) =>
+        client === VISIONOS ? unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age") : ciphered(ID),
+      error: {
+        code: "PLAYER_SOLVE_FAILED",
+        attempts: [
+          { client: "visionos", signedIn: false, step: "playability", code: "AGE_RESTRICTED" },
+          {
+            client: "web_embedded",
+            signedIn: false,
+            step: "player",
+            code: "PLAYER_SOLVE_FAILED",
+            reason: expect.stringContaining("f0000001"),
+            cause: expect.any(Error),
+          },
+          { client: "tv", signedIn: false, step: "player", code: "PLAYER_SOLVE_FAILED", cause: expect.any(Error) },
+        ],
+      },
+    },
+    "a failed embed page is not reported as a missing format": {
+      routes: { [`https://www.youtube.com/embed/${ID}?html5=1`]: () => new Response("", { status: 500 }) },
+      player: () => unplayable("UNPLAYABLE", ""),
+      error: {
+        code: "REQUEST_FAILED",
+        attempts: [
+          { client: "visionos", step: "playability", code: "NO_FORMAT" },
+          { client: "web_embedded", step: "embed", code: "REQUEST_FAILED", cause: expect.any(YtdlError) },
+          { client: "tv", step: "playability", code: "NO_FORMAT" },
+        ],
+      },
+    },
+    "a player script answering 404 fails its rung at the player step": {
+      clients: [Client.Tv],
+      playerId: "f0000404",
+      routes: { [playerScript("f0000404")]: () => new Response("not found", { status: 404 }) },
+      player: () => ciphered(ID),
+      error: {
+        code: "PLAYER_SOLVE_FAILED",
+        attempts: [
+          {
+            client: "tv",
+            step: "player",
+            code: "PLAYER_SOLVE_FAILED",
+            reason: expect.stringContaining("f0000404"),
+            cause: expect.any(Error),
+          },
+        ],
+      },
+    },
+    "the cookie hint follows a reason ending in a period": {
+      clients: [Client.VisionOS],
+      player: () => unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age."),
+      cookieHint: true,
+      error: {
+        message: `Could not play ${ID}: Sign in to confirm your age. This video needs a signed-in, age-verified account: pass \`cookie\` to new Ytdl().`,
+      },
+    },
+    "an unavailable answer outranks a player failure": {
+      clients: [Client.VisionOS, Client.Tv],
+      player: ({ client }) => (client === VISIONOS ? ciphered(ID) : unplayable("ERROR", "This video is unavailable")),
+      error: {
+        code: "NOT_FOUND",
+        attempts: [
+          { client: "visionos", step: "solve", code: "PLAYER_SOLVE_FAILED" },
+          { client: "tv", step: "playability", code: "NOT_FOUND" },
+        ],
+      },
+    },
+    "a failed visitor lookup fails its rung at the visitor step": {
+      clients: [Client.VisionOS],
+      routes: { "https://www.youtube.com/sw.js_data": () => new Response("", { status: 500 }) },
+      player: () => playable(ID),
+      error: { code: "REQUEST_FAILED", attempts: [{ client: "visionos", step: "visitor", code: "REQUEST_FAILED" }] },
+    },
+    "a failing PO token hook fails its rung at the po-token step": {
+      clients: [Client.Mweb],
+      options: { getPoToken: () => Promise.reject(new Error("minter down")) },
+      player: () => ciphered(ID),
+      error: {
+        code: "REQUEST_FAILED",
+        attempts: [{ client: "mweb", step: "po-token", code: "REQUEST_FAILED", cause: expect.any(Error) }],
+      },
+    },
+    "an answer with only DRM formats fails its rung at the formats step": {
+      clients: [Client.VisionOS],
+      player: () => playable(ID, [audioFormat(251, { drmFamilies: ["WIDEVINE"] })]),
+      error: { code: "NO_FORMAT", attempts: [{ client: "visionos", step: "formats", code: "NO_FORMAT" }] },
+    },
+    "ciphered formats without a player fail their rung at the solve step": {
+      clients: [Client.VisionOS],
+      player: () => ciphered(ID),
+      error: {
+        code: "PLAYER_SOLVE_FAILED",
+        attempts: [{ client: "visionos", step: "solve", code: "PLAYER_SOLVE_FAILED" }],
+      },
+    },
+    "countries on a later attempt win the tie and need no metadata": {
+      player: ({ client }) =>
+        client === TV
+          ? { ...unplayable("UNPLAYABLE", REGION_REASON), ...countries(["DE", "FR"]) }
+          : client === "WEB"
+            ? countries(["US"])
+            : unplayable("UNPLAYABLE", REGION_REASON),
+      error: { code: "REGION_BLOCKED", availableCountries: ["DE", "FR"] },
+    },
+  };
+
+  test.each(Object.entries(cases))(
+    "%s",
+    async (_, { clients, playerId, options, player, routes, cookieHint, metadataRequests, error }) => {
+      const yt = fakeYouTube({ player, ...(routes ? { routes } : {}) });
+      const rejected = await rejection(
+        new Ytdl({
+          fetch: yt.fetch,
+          playerId: playerId ?? PLAYER_ID,
+          ...(clients ? { clients } : {}),
+          ...options,
+        }).getInfo(ID),
+      );
+
+      expect(rejected).toMatchObject(error);
+      expect(rejected.message.includes("pass `cookie`")).toBe(cookieHint ?? false);
+      expect(yt.playerCalls.filter((call) => call.client === "WEB")).toHaveLength(metadataRequests ?? 0);
+    },
+  );
 });
 
 describe("input and cancellation", () => {
@@ -452,6 +590,21 @@ describe("input and cancellation", () => {
       .catch((caught: unknown) => caught);
     expect(error).toBe(reason);
     expect(yt.clients()).toEqual([VISIONOS]);
+  });
+
+  test("an abort that fails the last client rejects with the caller's reason", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller gave up");
+    const yt = fakeYouTube({
+      player: () => {
+        controller.abort(reason);
+        throw new Error("connection reset");
+      },
+    });
+    const error = await new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: [Client.Tv] })
+      .getInfo(ID, { signal: controller.signal })
+      .catch((caught: unknown) => caught);
+    expect(error).toBe(reason);
   });
 });
 

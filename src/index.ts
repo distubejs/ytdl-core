@@ -23,7 +23,7 @@ export type { PlaylistInfo, VideoSummary } from "./discovery.ts";
 export type { DownloadOptions, Media, ProgressEvent, ReadOptions, RetryEvent } from "./delivery/index.ts";
 export { parsePlaylistId, parseVideoId } from "./url.ts";
 export { YtdlError, YtdlErrorCode } from "./errors.ts";
-export type { AttemptRecord } from "./errors.ts";
+export type { AttemptRecord, AttemptStep } from "./errors.ts";
 export { Client, DEFAULT_CLIENTS } from "./clients.ts";
 export { createPoTokenProvider } from "./po-token/index.ts";
 export type { GetPoToken, PoTokenProvider, PoTokenProviderOptions, PoTokenRequest } from "./po-token/index.ts";

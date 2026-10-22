@@ -44,11 +44,19 @@ export const YtdlErrorCode = {
 
 export type YtdlErrorCode = (typeof YtdlErrorCode)[keyof typeof YtdlErrorCode];
 
+/** The stage of one client's lookup that failed. */
+export type AttemptStep = "player" | "embed" | "visitor" | "po-token" | "request" | "playability" | "formats" | "solve";
+
 /** One client's outcome inside a lookup, kept on the final error. */
 export interface AttemptRecord {
   readonly client: Client;
+  /** Whether the request carried the instance's `cookie`. */
+  readonly signedIn: boolean;
+  readonly step: AttemptStep;
   readonly code: YtdlErrorCode;
   readonly reason: string;
+  /** The redacted error behind a thrown failure. */
+  readonly cause?: unknown;
 }
 
 export interface YtdlErrorDetails {
@@ -71,7 +79,11 @@ export class YtdlError extends Error {
     super(redact(message), details.cause === undefined ? undefined : { cause: redactCause(details.cause) });
     this.code = code;
     this.attempts = Object.freeze(
-      (details.attempts ?? []).map((attempt) => ({ ...attempt, reason: redact(attempt.reason) })),
+      (details.attempts ?? []).map(({ cause, ...attempt }) => ({
+        ...attempt,
+        reason: redact(attempt.reason),
+        ...(cause === undefined ? {} : { cause: redactCause(cause) }),
+      })),
     );
     this.startTime = details.startTime;
     this.availableCountries = details.availableCountries && Object.freeze([...details.availableCountries]);
