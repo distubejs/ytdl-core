@@ -1,6 +1,6 @@
 {
   "name": "@distube/ytdl-core",
-  "version": "5.0.0",
+  "version": "4.16.12",
   "description": "YouTube video info and downloads for Node.js, with local player solving and resumable streams.",
   "keywords": [
     "audio",
