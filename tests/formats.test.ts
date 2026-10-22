@@ -106,6 +106,34 @@ describe("chooseFormat", () => {
     expect(lowest.height).toBe(Math.min(...videoOnly.map((format) => format.height ?? 0)));
   });
 
+  test.each(["lowest", "lowestaudio"] as const)("%s never takes an unknown bitrate over a known one", (quality) => {
+    const known = audio(901, "mp4", "mp4a.40.2", 48);
+    const unknown = { ...audio(902, "mp4", "mp4a.40.2", 0), audioBitrate: undefined };
+    const options = { quality, filter: { hasAudio: true, hasVideo: false } };
+    expect(chooseFormat([known, unknown], options)).toBe(known);
+    expect(chooseFormat([unknown, known], options)).toBe(known);
+    expect(chooseFormat([unknown], options)).toBe(unknown);
+  });
+
+  test("lowestvideo never takes an unknown bitrate over a known one", () => {
+    const known = { ...muxed, itag: 903, hasAudio: false, bitrate: 300_000 };
+    const unknown = { ...known, itag: 904, bitrate: undefined };
+    expect(chooseFormat([known, unknown], { quality: "lowestvideo" })).toBe(known);
+    expect(chooseFormat([unknown, known], { quality: "lowestvideo" })).toBe(known);
+  });
+
+  test("lowest picks a video format of known bitrate over audio renditions of unknown bitrate", () => {
+    const rendition = { ...audio(905, "mp4", "mp4a.40.2", 0), audioBitrate: undefined };
+    const variant = { ...muxed, itag: 906, hasAudio: false, audioBitrate: undefined, bitrate: 300_000 };
+    const larger = { ...variant, itag: 907, height: 720, bitrate: 2_000_000 };
+    for (const list of [
+      [rendition, variant, larger],
+      [larger, variant, rendition],
+    ]) {
+      expect(chooseFormat(list, { quality: "lowest" }).itag).toBe(906);
+    }
+  });
+
   test("an itag list falls through to the first available", () => {
     const [missing, present] = [...new Set(audioOnly.map((format) => format.itag))];
     const without = formats.filter((format) => format.itag !== missing);

@@ -9,15 +9,15 @@ import { at, isRecord, type Json, num, str } from "./json.ts";
 export const Quality = {
   /** The top format when ranked by known size, then audio and video together, then resolution and bitrate. */
   Highest: "highest",
-  /** The bottom format of the `Highest` ranking. */
+  /** The bottom format of the `Highest` ranking that has a known bitrate; the bottom one when none has. */
   Lowest: "lowest",
   /** The format with the best audio; among equals, the smallest video. */
   HighestAudio: "highestaudio",
-  /** The format with the smallest audio. */
+  /** The format with the smallest audio and a known bitrate; the smallest when none has. */
   LowestAudio: "lowestaudio",
   /** The format with the best video; among equals, the smallest audio. */
   HighestVideo: "highestvideo",
-  /** The format with the smallest video. */
+  /** The format with the smallest video and a known bitrate; the smallest when none has. */
   LowestVideo: "lowestvideo",
 } as const;
 
@@ -506,6 +506,10 @@ export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFor
   throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
 }
 
+function lowest(sorted: readonly VideoFormat[], bitrate: (format: VideoFormat) => number | undefined) {
+  return sorted.findLast((format) => bitrate(format) !== undefined) ?? sorted.at(-1);
+}
+
 function pick(candidates: readonly VideoFormat[], quality: Quality): VideoFormat | undefined {
   if (typeof quality === "number") return candidates.find((format) => format.itag === quality);
   if (Array.isArray(quality)) {
@@ -517,11 +521,13 @@ function pick(candidates: readonly VideoFormat[], quality: Quality): VideoFormat
   }
   if (quality === "highest" || quality === "lowest") {
     const sorted = candidates.toSorted(sortFormats);
-    return quality === "highest" ? sorted[0] : sorted.at(-1);
+    return quality === "highest"
+      ? sorted[0]
+      : lowest(sorted, (format) => (format.hasVideo ? format.bitrate : format.audioBitrate));
   }
   if (quality === "highestaudio" || quality === "lowestaudio") {
     const sorted = candidates.filter((format) => format.hasAudio).toSorted(byAudio);
-    if (quality === "lowestaudio") return sorted.at(-1);
+    if (quality === "lowestaudio") return lowest(sorted, (format) => format.audioBitrate);
     const best = sorted[0];
     return (
       best &&
@@ -530,7 +536,7 @@ function pick(candidates: readonly VideoFormat[], quality: Quality): VideoFormat
   }
   if (quality === "highestvideo" || quality === "lowestvideo") {
     const sorted = candidates.filter((format) => format.hasVideo).toSorted(byVideo);
-    if (quality === "lowestvideo") return sorted.at(-1);
+    if (quality === "lowestvideo") return lowest(sorted, (format) => format.bitrate);
     const best = sorted[0];
     return (
       best &&
