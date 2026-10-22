@@ -342,7 +342,6 @@ export function parseFormats(player: Json, client: Client): RawFormat[] {
   return out;
 }
 
-// YouTube's live HLS variants are muxed audio and video.
 const VIDEO_ENCODINGS = ["mp4v", "avc1", "Sorenson H.283", "MPEG-4 Visual", "VP8", "VP9", "vp09", "av01", "H.264"];
 const AUDIO_ENCODINGS = ["mp4a", "mp3", "vorbis", "aac", "opus", "flac"];
 

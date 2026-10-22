@@ -35,6 +35,9 @@ function recorded() {
   });
 }
 
+const hlsPlaylist = (itag: number) =>
+  `https://manifest.googlevideo.com/api/manifest/hls_playlist/id/live/itag/${itag}/index.m3u8`;
+
 const ad = (seconds: number) => ({ instreamVideoAdRenderer: { playerVars: `length_seconds=${seconds}&x=1` } });
 
 describe("getInfo details", () => {
@@ -261,6 +264,52 @@ describe("getInfo", () => {
       hasAudio: true,
       hasVideo: true,
       qualityLabel: "720p",
+    });
+  });
+
+  test("a live master's audio renditions are listed audio-only and the variants that use them report no audio", async () => {
+    const manifest = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/live";
+    const yt = fakeYouTube({
+      player: () => ({
+        ...playable(ID, []),
+        videoDetails: { videoId: ID, isLive: true },
+        streamingData: { adaptiveFormats: [], hlsManifestUrl: manifest },
+      }),
+      routes: {
+        [manifest]: () =>
+          new Response(
+            [
+              "#EXTM3U",
+              `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="233",URI="${hlsPlaylist(233)}"`,
+              `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="234",URI="${hlsPlaylist(234)}"`,
+              '#EXT-X-STREAM-INF:BANDWIDTH=290000,CODECS="avc1.42c00b,mp4a.40.5",RESOLUTION=256x144,FRAME-RATE=30,AUDIO="233"',
+              hlsPlaylist(269),
+              '#EXT-X-STREAM-INF:BANDWIDTH=2500000,CODECS="avc1.4d401f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30,AUDIO="234"',
+              hlsPlaylist(311),
+            ].join("\n"),
+          ),
+      },
+    });
+
+    const info = await new Ytdl({ fetch: yt.fetch }).getInfo(ID);
+
+    expect(info.formats.map(({ itag, hasAudio, hasVideo }) => ({ itag, hasAudio, hasVideo }))).toEqual([
+      { itag: 233, hasAudio: true, hasVideo: false },
+      { itag: 234, hasAudio: true, hasVideo: false },
+      { itag: 269, hasAudio: false, hasVideo: true },
+      { itag: 311, hasAudio: false, hasVideo: true },
+    ]);
+    expect(info.formats[0]).toMatchObject({
+      url: hlsPlaylist(233),
+      audioCodec: "mp4a.40.5",
+      isHLS: true,
+      isLive: true,
+    });
+    expect(info.formats[1]).toMatchObject({
+      url: hlsPlaylist(234),
+      audioCodec: "mp4a.40.2",
+      isHLS: true,
+      isLive: true,
     });
   });
 

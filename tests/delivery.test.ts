@@ -206,6 +206,9 @@ function failingAt(start: number, answer: () => Response, resume?: Delivery["res
   return setup({ fetch: server.fetch, options: { chunkSize: 1000 }, resume });
 }
 
+const hlsPlaylist = (itag: number) =>
+  `https://manifest.googlevideo.com/api/manifest/hls_playlist/id/live/itag/${itag}/index.m3u8`;
+
 function playlist(first: number, last: number, ended = false, targetDuration = 0.01): string {
   const lines = ["#EXTM3U", `#EXT-X-TARGETDURATION:${targetDuration}`, `#EXT-X-MEDIA-SEQUENCE:${first}`];
   for (let sequence = first; sequence <= last; sequence++) lines.push("#EXTINF:1.0,", `seg/${sequence}.ts`);
@@ -786,6 +789,40 @@ describe("live delivery", () => {
 
     expect(errors).toEqual([]);
     expect(new TextDecoder().decode(data)).toBe("13,14,15,16,17,18,19,20,21,");
+  });
+
+  test("a highest-audio download of a master with a separate audio rendition reads the rendition's segments", async () => {
+    const manifest = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/live";
+    const yt = fakeYouTube({
+      player: () => ({
+        ...playable(VIDEO_ID, []),
+        videoDetails: { videoId: VIDEO_ID, isLive: true },
+        streamingData: { adaptiveFormats: [], hlsManifestUrl: manifest },
+      }),
+      routes: {
+        [manifest]: () =>
+          new Response(
+            [
+              "#EXTM3U",
+              `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="233",URI="${hlsPlaylist(233)}"`,
+              '#EXT-X-STREAM-INF:BANDWIDTH=290000,CODECS="avc1.42c00b,mp4a.40.5",RESOLUTION=256x144,FRAME-RATE=30,AUDIO="233"',
+              hlsPlaylist(269),
+            ].join("\n"),
+          ),
+      },
+      media: (url) => {
+        const itag = /\/itag\/(\d+)\//u.exec(url.pathname)?.[1];
+        if (url.pathname.endsWith(".m3u8"))
+          return new Response(playlist(1, 2, true).replaceAll("seg/", `seg/${itag}-`));
+        return new Response(`${/\/seg\/([\d-]+)\.ts$/u.exec(url.pathname)?.[1]},`);
+      },
+    });
+
+    const stream = new Ytdl({ fetch: yt.fetch }).download(VIDEO_ID, { quality: "highestaudio" });
+    const { data, errors } = await collectNode(stream);
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("233-1,233-2,");
   });
 });
 

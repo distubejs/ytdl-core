@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   type ChooseFormatOptions,
   Client,
@@ -17,6 +18,7 @@ const COOKIE = process.env.YTDL_COOKIE;
 const HOST = process.env.YTDL_HOST ?? "unlabelled";
 const TIMEOUT = 300_000;
 const LIVE_MS = 3 * 60_000;
+const PROBE_BYTES = 2 * 1024 * 1024;
 
 const VIDEOS = {
   normal: "aqz-KE-bpKQ", // Big Buck Bunny, Blender, CC BY 3.0
@@ -62,6 +64,19 @@ async function plays(label: string, yt: Ytdl, id: string, offsets: readonly numb
   }
   rows.push(`  ${label} ${id}: ${info.client}, itag ${format.itag}, offsets ${offsets.join(", ")}`);
   return info;
+}
+
+function audioStreams(bytes: Buffer): number {
+  const probe = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", "-i", "pipe:0"],
+    {
+      input: bytes,
+      encoding: "utf8",
+    },
+  );
+  if (probe.error) throw probe.error;
+  return probe.stdout.split("\n").filter((line) => line.trim() === "audio").length;
 }
 
 async function longOffsets(yt: Ytdl): Promise<number[]> {
@@ -175,16 +190,18 @@ describe.skipIf(!LIVE)("real YouTube", () => {
     TIMEOUT,
   );
 
-  async function streams(label: string, filter: Filter): Promise<void> {
+  async function streams(label: string, filter: Filter, probeAudio = false): Promise<void> {
     const info = await yt.getInfo(VIDEOS.live);
     expect(info.videoDetails.isLive).toBe(true);
     const format = chooseFormat(info.formats, { quality: Quality.Lowest, filter });
     const controller = new AbortController();
     let bytes = 0;
+    const head: Buffer[] = [];
     const started = Date.now();
     const stream = yt.open(info, format).read({ signal: controller.signal });
     await new Promise<void>((resolve, reject) => {
       stream.on("data", (chunk: Uint8Array) => {
+        if (bytes < PROBE_BYTES) head.push(Buffer.from(chunk));
         bytes += chunk.length;
         if (Date.now() - started >= LIVE_MS) {
           controller.abort();
@@ -195,15 +212,23 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       stream.on("end", resolve);
     });
     expect(bytes).toBeGreaterThan(0);
+    if (probeAudio) {
+      expect(format.hasAudio).toBe(true);
+      expect(audioStreams(Buffer.concat(head))).toBeGreaterThan(0);
+    }
     rows.push(
       `  ${label} ${VIDEOS.live}: ${info.client}, itag ${format.itag} at ${format.bitrate} bps, ${bytes} bytes in ${LIVE_MS / 1000} s`,
     );
   }
 
-  test("live stream over HLS, 3 minutes of segments", () => streams("live hls", (format) => format.isHLS), 2 * TIMEOUT);
+  test(
+    "live stream over HLS, 3 minutes of segments",
+    () => streams("live hls", (format) => format.isHLS && format.hasAudio, true),
+    2 * TIMEOUT,
+  );
   test(
     "live stream over DASH, 3 minutes of segments",
-    () => streams("live dash", { isLive: true, hasAudio: true, hasVideo: false }),
+    () => streams("live dash", (format) => format.isLive && !format.isHLS && format.hasAudio && !format.hasVideo),
     2 * TIMEOUT,
   );
 
