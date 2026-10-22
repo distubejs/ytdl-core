@@ -21,6 +21,11 @@ function playabilityReason(status: unknown): string {
   return [...new Set(parts.filter((part): part is string => !!part))].join(" ");
 }
 
+export function availableCountries(player: unknown): readonly string[] | undefined {
+  const countries = at(player, "microformat", "playerMicroformatRenderer", "availableCountries");
+  return Array.isArray(countries) ? countries.filter((country) => typeof country === "string") : undefined;
+}
+
 // Reason strings follow yt-dlp and NewPipe.
 export function classifyPlayability(player: Json): Playability {
   const status = at(player, "playabilityStatus");
@@ -28,7 +33,6 @@ export function classifyPlayability(player: Json): Playability {
   if (value === "OK") return { ok: true };
   const reason = playabilityReason(status) || `status ${String(value)}`;
   const lower = reason.toLowerCase();
-  const countries = at(player, "microformat", "playerMicroformatRenderer", "availableCountries");
   const fail = (
     code: YtdlErrorCode,
     extra: Partial<Pick<Playability & { ok: false }, "startTime" | "availableCountries">> = {},
@@ -60,10 +64,8 @@ export function classifyPlayability(player: Json): Playability {
   if (lower.includes("premium")) return fail("PREMIUM_ONLY");
   if (lower.includes("members") || lower.includes("join this channel")) return fail("MEMBERS_ONLY");
   if (lower.includes("country") || lower.includes("your location")) {
-    return fail(
-      "REGION_BLOCKED",
-      Array.isArray(countries) ? { availableCountries: countries.filter((c) => typeof c === "string") } : {},
-    );
+    const countries = availableCountries(player);
+    return fail("REGION_BLOCKED", countries ? { availableCountries: countries } : {});
   }
   if (lower.includes("try again later") || lower.includes("too many requests")) return fail("RATE_LIMITED");
   if (value === "LOGIN_REQUIRED") return fail("BOT_CHECK");

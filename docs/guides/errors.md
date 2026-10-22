@@ -69,6 +69,6 @@ The error's `code` is the attempt code that ranks first, and its own `cause` is 
 
 The ranks sit in `RANK` in `src/resolve.ts`. `INVALID_URL`, `INVALID_ARGUMENT` and `NO_CAPTIONS` come last because no rung reports them. Among attempts with the winning code, the first one that carries `availableCountries` or `startTime` supplies them. The losing attempts stay in `attempts` with their own code, so an `AGE_RESTRICTED` rung is still listed when a broken player wins.
 
-An `AGE_RESTRICTED` error from an instance without a cookie says once that you need to pass `cookie`.
+An `AGE_RESTRICTED` error from an instance without a cookie says once that you need to pass `cookie`. A `REGION_BLOCKED` error with no allowed countries from any client asks YouTube's web metadata once to fill `availableCountries`.
 
 Messages never contain your cookie, tokens, or the signed parameters of media URLs.

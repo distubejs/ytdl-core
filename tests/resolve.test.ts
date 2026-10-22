@@ -420,6 +420,8 @@ describe("outcomes", () => {
 
 const playerScript = (id: string) => `https://www.youtube.com/s/player/${id}/player_ias.vflset/en_US/base.js`;
 const REGION_REASON = "The uploader has not made this video available in your country";
+const ACCOUNT = "SID=account-sid-value; SAPISID=sapisid-value-aaaa";
+const SIGNED_IN_HOME = { "https://www.youtube.com/": () => new Response('ytcfg.set({"LOGGED_IN":true});') };
 const countries = (list: readonly string[]) => ({
   microformat: { playerMicroformatRenderer: { availableCountries: list } },
 });
@@ -527,6 +529,35 @@ describe("attempt attribution", () => {
       cookieHint: true,
       error: {
         message: `Could not play ${ID}: Sign in to confirm your age. This video needs a signed-in, age-verified account: pass \`cookie\` to new Ytdl().`,
+      },
+    },
+    "only WEB metadata lists the allowed countries": {
+      player: ({ client }) =>
+        client === "WEB"
+          ? { ...unplayable("UNPLAYABLE", REGION_REASON), ...countries(["DE", "FR"]) }
+          : unplayable("UNPLAYABLE", REGION_REASON),
+      metadataRequests: 1,
+      error: { code: "REGION_BLOCKED", availableCountries: ["DE", "FR"] },
+    },
+    "a generic unavailable answer does not hide a region block": {
+      options: { cookie: ACCOUNT },
+      routes: SIGNED_IN_HOME,
+      player: ({ client, headers }) =>
+        client === WEB_EMBEDDED && headers.has("Authorization")
+          ? unplayable("ERROR", "This video is unavailable")
+          : client === VISIONOS || client === "WEB"
+            ? unplayable("UNPLAYABLE", REGION_REASON)
+            : unplayable("UNPLAYABLE", ""),
+      metadataRequests: 1,
+      error: {
+        code: "REGION_BLOCKED",
+        attempts: [
+          { client: "visionos", signedIn: false, code: "REGION_BLOCKED" },
+          { client: "web_embedded", signedIn: false, code: "NO_FORMAT" },
+          { client: "web_embedded", signedIn: true, step: "playability", code: "NOT_FOUND" },
+          { client: "tv", signedIn: false, code: "NO_FORMAT" },
+          { client: "tv", signedIn: true, code: "NO_FORMAT" },
+        ],
       },
     },
     "a generic unavailable answer does not hide an upcoming live event": {
@@ -652,6 +683,23 @@ describe("input and cancellation", () => {
       .getInfo(ID, { signal: controller.signal })
       .catch((caught: unknown) => caught);
     expect(error).toBe(reason);
+  });
+
+  test("an abort during the region metadata lookup rejects with the caller's reason", async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller gave up");
+    const yt = fakeYouTube({
+      player: ({ client }) => {
+        if (client !== "WEB") return unplayable("UNPLAYABLE", REGION_REASON);
+        controller.abort(reason);
+        return countries(["DE"]);
+      },
+    });
+    const error = await new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID })
+      .getInfo(ID, { signal: controller.signal })
+      .catch((caught: unknown) => caught);
+    expect(error).toBe(reason);
+    expect(yt.playerCalls.filter((call) => call.client === "WEB")).toHaveLength(1);
   });
 });
 

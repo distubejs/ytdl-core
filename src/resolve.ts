@@ -18,7 +18,7 @@ import {
 } from "./formats.ts";
 import type { InnerTube } from "./innertube.ts";
 import { at, type Json, str } from "./json.ts";
-import { classifyPlayability, prerollEnd } from "./playability.ts";
+import { availableCountries, classifyPlayability, prerollEnd } from "./playability.ts";
 import type { GetPoToken } from "./po-token/index.ts";
 import { loadPlayer, type SignedUrl } from "./solver/index.ts";
 
@@ -124,6 +124,7 @@ function failure(
   best: Attempt | undefined,
   videoId: string,
   account: boolean,
+  countries: readonly string[] | undefined,
 ): YtdlError {
   const code = best?.code ?? "NO_FORMAT";
   let message = `Could not play ${videoId}: ${best?.reason ?? "no client returned a playable answer"}`;
@@ -131,10 +132,11 @@ function failure(
     const sentence = /[.!?]$/u.test(message) ? message : `${message}.`;
     message = `${sentence} This video needs a signed-in, age-verified account: pass \`cookie\` to new Ytdl().`;
   }
+  const allowed = best?.availableCountries ?? countries;
   return new YtdlError(code, message, {
     attempts: records(attempts),
     ...(best?.startTime ? { startTime: best.startTime } : {}),
-    ...(best?.availableCountries ? { availableCountries: best.availableCountries } : {}),
+    ...(allowed ? { availableCountries: allowed } : {}),
     ...(best?.cause === undefined ? {} : { cause: best.cause }),
   });
 }
@@ -183,7 +185,22 @@ export class Resolver {
         break;
       }
     }
-    throw failure(attempts, mostSpecific(attempts), videoId, auth !== undefined);
+    const best = mostSpecific(attempts);
+    const countries =
+      best?.code === "REGION_BLOCKED" && !best.availableCountries
+        ? await this.#regionCountries(videoId, options.signal)
+        : undefined;
+    throw failure(attempts, best, videoId, auth !== undefined, countries);
+  }
+
+  async #regionCountries(videoId: string, signal: AbortSignal | undefined): Promise<readonly string[] | undefined> {
+    const { innertube } = this.#options;
+    const metadata = await innertube
+      .visitorData(signal)
+      .then((visitor) => innertube.webMetadata(videoId, visitor, signal))
+      .catch(() => undefined);
+    signal?.throwIfAborted();
+    return availableCountries(metadata);
   }
 
   async #tryRung(
