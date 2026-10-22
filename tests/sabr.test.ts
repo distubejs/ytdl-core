@@ -370,6 +370,12 @@ describe("SABR delivery", () => {
     await stopped.promise;
   });
 
+  test("a stopped SABR session releases a response body that ignores the abort", async () => {
+    const released = Promise.withResolvers<void>();
+    await rangeInFirstSegment(async () => new Response(new ReadableStream({ cancel: () => released.resolve() })));
+    await released.promise;
+  });
+
   test("destroying the stream stops a session that waits on the server", async () => {
     const { sabr, ytdl } = setup({ requireAttestation: true });
     const stream = ytdl.download(ID, { quality: 251 });

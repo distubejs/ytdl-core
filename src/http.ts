@@ -38,7 +38,7 @@ export function timed(fetchFn: typeof fetch, ms: number): typeof fetch {
           timer = setTimeout(() => reject(timeoutError(ms)), ms);
         });
         try {
-          const result = await Promise.race([reader.read(), stalled]);
+          const result = await Promise.race([abortable(reader.read(), signal), stalled]);
           if (result.done) stream.close();
           else stream.enqueue(result.value);
         } catch (error) {
