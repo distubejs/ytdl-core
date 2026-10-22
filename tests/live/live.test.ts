@@ -12,6 +12,7 @@ import {
   Ytdl,
   type VideoInfo,
 } from "../../src/index.ts";
+import { audioFormat, fakeYouTube, MEDIA_HOST, playable } from "../fake-youtube.ts";
 
 const LIVE = process.env.YTDL_LIVE === "1";
 const COOKIE = process.env.YTDL_COOKIE;
@@ -29,6 +30,70 @@ const VIDEOS = {
 } as const;
 const SEARCH_QUERY = "blender open movie";
 const PLAYLIST = "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"; // NASA, Perseverance Mars Rover, over 100 entries
+
+const EJS_COMMIT = "68448fa"; // yt-dlp/ejs src/yt/solver/test/tests.ts, Unlicense
+
+interface Vector {
+  readonly input: string;
+  readonly expected: string;
+}
+
+const PINNED_PLAYERS: Record<string, { readonly n: readonly Vector[]; readonly sig: readonly Vector[] }> = {
+  "74edf1a3": {
+    n: [
+      { input: "IlLiA21ny7gqA2m4p37", expected: "9nRTxrbM1f0yHg" },
+      { input: "eabGFpsUKuWHXGh6FR4", expected: "izmYqDEY6kl7Sg" },
+      { input: "eabGF/ps%UK=uWHXGh6FR4", expected: "LACmqlhaBpiPlgE-a" },
+    ],
+    sig: [
+      {
+        input:
+          "NJAJEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyyPRt=BM8-XO5tm5hlMCSVpAiEAv7eP3CURqZNSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=gwzz",
+        expected:
+          "NJAJEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyyPRt=BM8-XO5tm5hzMCSVpAiEAv7eP3CURqZNSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=gwzl",
+      },
+      {
+        input:
+          "\u0000\u0001\u0002%\u0003\u0004\u0005\u0006\u0007\b\t\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019 !\"#$%&'()0123456789@ABCDEFGHI",
+        expected:
+          "\u0000\u0001\u0002%\u0003\u0004\u0005\u0006\u0007\b\t\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019 !\"#$%&'()0123456789@ABIDEFGHC",
+      },
+    ],
+  },
+  "901741ab": {
+    n: [{ input: "BQoJvGBkC2nj1ZZLK-", expected: "UMPovvBZRh-sjb" }],
+    sig: [
+      {
+        input:
+          "NJAJEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyyPRt=BM8-XO5tm5hlMCSVpAiEAv7eP3CURqZNSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=gwzz",
+        expected:
+          "wgwCHlydB9Hg7PMegXoVzaoAXXB8woPSNZqRUC3Pe7vAEiApVSCMlhwmt5ON-8MB=5RPyyzdAM9MPM-kPfjgTxEK0IAhIgRwE0jiEJA",
+      },
+    ],
+  },
+  e7573094: {
+    n: [{ input: "IlLiA21ny7gqA2m4p37", expected: "3KuQ3235dojTSjo4" }],
+    sig: [
+      {
+        input:
+          "NJAJEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyyPRt=BM8-XO5tm5hlMCSVpAiEAv7eP3CURqZNSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=gwzz",
+        expected:
+          "yEij0EwRgIhAI0KExTgjfPk-MPM9MAdzyNPRt=BM8-XO5tm5hlMCSVNAiEAvpeP3CURqZJSPow8BXXAoazVoXgeMP7gH9BdylHCwgw=g",
+      },
+    ],
+  },
+  "9fcf08e8": {
+    n: [{ input: "4JRSxxN0E_fLVnxmd", expected: "xhAoMP8xPcR5wg" }],
+    sig: [
+      {
+        input:
+          "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghij",
+        expected:
+          "jihgfedcba`_^]\\[ZYXWVUTSRQPONMLKJIHGFEDCBA@?>=<;:9876543210/.-,+*)('&%$#\"! \u001f\u001e\u001d\u001c\u001b\u001a\u0019\u0018\u0017\u0016\u0015\u0014\u0013\u0012\u0011\u0010\u000f\u000e\r\f\u000b\u0003\t\b\u0007\u0006\u0005\u0004\n",
+      },
+    ],
+  },
+};
 
 const rows: string[] = [];
 afterAll(() => {
@@ -126,6 +191,35 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       }
     },
     2 * TIMEOUT,
+  );
+
+  test.each(Object.entries(PINNED_PLAYERS))(
+    `pinned player %s solves sig and n to the yt-dlp/ejs ${EJS_COMMIT} reference values`,
+    async (playerId, { n, sig }) => {
+      const videoId = VIDEOS.normal;
+      const formats = Array.from({ length: Math.max(n.length, sig.length) }, (_, index) => {
+        const query = `itag=${251 - index}&expire=4102444800${n[index] ? `&n=${encodeURIComponent(n[index].input)}` : ""}`;
+        const url = `${MEDIA_HOST}?${query}`;
+        const cipher = sig[index]
+          ? { url: undefined, signatureCipher: new URLSearchParams({ s: sig[index].input, sp: "sig", url }).toString() }
+          : { url };
+        return audioFormat(251 - index, cipher);
+      });
+      const answers = fakeYouTube({ player: () => playable(videoId, formats) });
+      const fetch = ((input: string | URL | Request, init?: RequestInit) =>
+        String(input).includes("/s/player/")
+          ? globalThis.fetch(input, init)
+          : answers.fetch(input, init)) as typeof globalThis.fetch;
+      const info = await new Ytdl({ fetch, playerId, clients: [Client.Tv] }).getInfo(videoId);
+      expect(info.formats).toHaveLength(formats.length);
+      for (const [index, format] of formats.entries()) {
+        const solved = new URL(info.formats.find((candidate) => candidate.itag === format.itag)?.url ?? "");
+        expect(solved.searchParams.get("n")).toBe(n[index]?.expected ?? null);
+        expect(solved.searchParams.get("sig")).toBe(sig[index]?.expected ?? null);
+      }
+      rows.push(`  player ${playerId}: ${n.length} n, ${sig.length} sig solved`);
+    },
+    TIMEOUT,
   );
 
   test("Short", () => plays("short", yt, VIDEOS.short), TIMEOUT);
