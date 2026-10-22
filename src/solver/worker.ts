@@ -53,7 +53,82 @@ var __ytdl = {
   },
 };
 `;
+const STANDARD_GLOBALS = [
+  "globalThis",
+  "Infinity",
+  "NaN",
+  "undefined",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "escape",
+  "unescape",
+  "Object",
+  "Function",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "Symbol",
+  "BigInt",
+  "Date",
+  "RegExp",
+  "Promise",
+  "Proxy",
+  "Reflect",
+  "Math",
+  "JSON",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "WeakRef",
+  "FinalizationRegistry",
+  "Error",
+  "AggregateError",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+  "ArrayBuffer",
+  "DataView",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+];
+const KEEP_STANDARD_GLOBALS = `(function (allowed) {
+  var names = Object.getOwnPropertyNames(globalThis);
+  for (var i = 0; i < names.length; i++) if (allowed.indexOf(names[i]) === -1 && !delete globalThis[names[i]]) globalThis[names[i]] = undefined;
+  return Object.getOwnPropertyNames(globalThis).filter(function (name) { return allowed.indexOf(name) === -1 && globalThis[name] !== undefined; }).join(", ");
+})(${JSON.stringify(STANDARD_GLOBALS)})`;
+
 const players = new Map<number, vm.Context>();
+
+function standardContext(): vm.Context {
+  const context = vm.createContext(Object.create(null), {
+    microtaskMode: "afterEvaluate",
+    codeGeneration: { strings: false },
+  });
+  const survivors: unknown = vm.runInContext(KEEP_STANDARD_GLOBALS, context);
+  if (survivors !== "") throw new Error(`The solver context kept non-standard globals: ${String(survivors)}`);
+  return context;
+}
 
 function prepare(source: string): vm.Context {
   const program = parseScript(source, { ranges: true });
@@ -77,10 +152,7 @@ function prepare(source: string): vm.Context {
     `;__ytdl.builders = [${builders.join(", ")}];`,
     source.slice(end(block) - 1),
   ].join("\n");
-  const context = vm.createContext(Object.create(null), {
-    microtaskMode: "afterEvaluate",
-    codeGeneration: { strings: false },
-  });
+  const context = standardContext();
   runPlayer(code, context);
   return context;
 }

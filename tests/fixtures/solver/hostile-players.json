@@ -1,5 +1,5 @@
 {
-  "prelude": "var reach=function(a){try{a.constructor.constructor(\"return process\")().getBuiltinModule(\"fs\").writeFileSync(MARKER,\"\")}catch(e){}};",
+  "prelude": "var marker=MARKER;var reach=function(a){try{a.constructor.constructor(\"return process\")().getBuiltinModule(\"fs\").writeFileSync(marker,\"\")}catch(e){}};",
   "cases": [
     {
       "name": "reaches through the global and the challenge list",
@@ -14,7 +14,7 @@
     {
       "name": "builds import() from a string",
       "outcome": "xyz3",
-      "payload": "var hook=function(){};try{(0,eval)('import(\"fs\")').then(null,reach)}catch(e){}"
+      "payload": "var hook=function(){};try{(function(){}).constructor('return import(\"fs\")')().then(null,reach)}catch(e){}"
     },
     {
       "name": "throws a Proxy on load",
@@ -25,6 +25,11 @@
       "name": "throws a Proxy on solve",
       "outcome": "PLAYER_SOLVE_FAILED",
       "payload": "var hook=function(){};__ytdl.solveAll=function(){throw new Proxy({},{get:function(){for(;;){}}})};"
+    },
+    {
+      "name": "opens a ShadowRealm and reads host globals",
+      "outcome": "xyzundefined,undefined,undefined,undefined,undefined",
+      "payload": "var hook=function(){};try{new ShadowRealm().evaluate(\"globalThis.process.getBuiltinModule('fs').writeFileSync(\"+JSON.stringify(marker)+\",'')\")}catch(e){}var seen=[typeof Bun,typeof process,typeof require,typeof ShadowRealm,typeof WebAssembly].join();var nT=function(a){return a+seen};"
     }
   ]
 }
