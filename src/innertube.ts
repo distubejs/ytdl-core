@@ -1,4 +1,4 @@
-import { type ClientDefinition, CLIENTS, type Client, userAgentHeader, WEB, YOUTUBE_ORIGIN } from "./clients.ts";
+import { BROWSER, type ClientDefinition, CLIENTS, type Client, WEB, YOUTUBE_ORIGIN } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { abortable, bodyText, expectOk, fetchText, ignore, send } from "./http.ts";
 import { at, isRecord, type Json, str, ytcfg } from "./json.ts";
@@ -89,7 +89,7 @@ export class InnerTube {
   async embedContext(videoId: string, signal: AbortSignal | undefined): Promise<EmbedContext> {
     const page = await this.text(
       `${YOUTUBE_ORIGIN}/embed/${encodeURIComponent(videoId)}?html5=1`,
-      { headers: { ...userAgentHeader("web_embedded"), Referer: EMBED_HOST }, signal },
+      { headers: { ...BROWSER, Referer: EMBED_HOST }, signal },
       "YouTube embed page",
     );
     const config = ytcfg(page);
@@ -167,7 +167,7 @@ export class InnerTube {
   // Without visitor data every client answers "confirm you're not a bot"; `sw.js_data` hands one out.
   async #fetchVisitorData(): Promise<string> {
     const what = "YouTube visitor data";
-    const body = await this.text(`${YOUTUBE_ORIGIN}/sw.js_data`, { headers: userAgentHeader("visionos") }, what);
+    const body = await this.text(`${YOUTUBE_ORIGIN}/sw.js_data`, { headers: BROWSER }, what);
     let parsed: unknown;
     try {
       parsed = JSON.parse(body.replace(/^\)\]\}'\s*/u, ""));

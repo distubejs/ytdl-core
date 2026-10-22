@@ -49,6 +49,8 @@ const CHROME =
 const SAFARI =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)";
 
+export const BROWSER: Readonly<Record<string, string>> = { "User-Agent": CHROME };
+
 const base = {
   context: {},
   origin: YOUTUBE_ORIGIN,

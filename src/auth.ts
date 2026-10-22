@@ -1,6 +1,6 @@
 // Header format follows yt-dlp `_base.py` `_generate_cookie_auth_headers`.
 import { createHash } from "node:crypto";
-import { userAgentHeader, YOUTUBE_ORIGIN } from "./clients.ts";
+import { BROWSER, YOUTUBE_ORIGIN } from "./clients.ts";
 import { registerSecret, YtdlError } from "./errors.ts";
 import { abortable, fetchText } from "./http.ts";
 import { str, ytcfg } from "./json.ts";
@@ -114,7 +114,7 @@ export class CookieAuth {
     const page = await fetchText(
       this.#fetch,
       `${YOUTUBE_ORIGIN}/`,
-      { headers: { Cookie: this.#cookie, ...userAgentHeader("web_creator") } },
+      { headers: { Cookie: this.#cookie, ...BROWSER } },
       "The signed-in YouTube home page",
     );
     const config = ytcfg(page);
