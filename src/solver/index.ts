@@ -81,11 +81,15 @@ let discovery: { readonly id: Promise<string>; readonly at: number } | undefined
 
 function discoverPlayerId(fetchFn: typeof fetch, signal: AbortSignal | undefined): Promise<string> {
   if (!discovery || Date.now() - discovery.at >= DISCOVERY_TTL_MS) {
-    const id = fetchText(fetchFn, `${YOUTUBE_ORIGIN}/iframe_api`, {}, "YouTube iframe API").then((text) => {
-      const found = /player\\?\/([\da-f]{8})\\?\//u.exec(text)?.[1];
-      if (!found) throw new YtdlError("PLAYER_SOLVE_FAILED", "No player ID in the iframe API script");
-      return found;
-    });
+    const id = fetchText(fetchFn, `${YOUTUBE_ORIGIN}/iframe_api`, {}, "YouTube iframe API")
+      .then((text) => {
+        const found = /player\\?\/([\da-f]{8})\\?\//u.exec(text)?.[1];
+        if (!found) throw new Error("No player ID in the iframe API script");
+        return found;
+      })
+      .catch((cause: unknown) => {
+        throw new YtdlError("PLAYER_SOLVE_FAILED", "Could not find the current player version", { cause });
+      });
     const entry = { id, at: Date.now() };
     discovery = entry;
     id.catch(() => {
@@ -100,13 +104,15 @@ const playerUrl = (id: string): string =>
   `${YOUTUBE_ORIGIN}/s/player/${encodeURIComponent(id)}/player_ias.vflset/en_US/base.js`;
 
 async function prepare(id: string, fetchFn: typeof fetch): Promise<PreparedPlayer> {
-  const source = await fetchText(fetchFn, playerUrl(id), {}, `YouTube player ${id}`);
+  const source = await fetchText(fetchFn, playerUrl(id), {}, `YouTube player ${id}`).catch((cause: unknown) => {
+    throw new YtdlError("PLAYER_SOLVE_FAILED", `Could not load player ${id}`, { cause });
+  });
   const timestamp = /signatureTimestamp:(\d+)/u.exec(source)?.[1];
   if (!timestamp) throw new YtdlError("PLAYER_SOLVE_FAILED", `No signature timestamp in player ${id}`);
   const rpc = worker();
   const handle = ++nextHandle;
   await call(rpc, { kind: "load", handle, source }).catch((cause: unknown) => {
-    throw new YtdlError("PLAYER_SOLVE_FAILED", "Could not prepare the player", { cause });
+    throw new YtdlError("PLAYER_SOLVE_FAILED", `Could not prepare player ${id}`, { cause });
   });
   const player: PreparedPlayer = {
     id,

@@ -162,11 +162,22 @@ describe("loadPlayer", () => {
     expect(error.code).toBe("PLAYER_SOLVE_FAILED");
   });
 
-  test("a player without the URL builder fails to load as PLAYER_SOLVE_FAILED", async () => {
-    const { fetch } = youtube({ d0000001: PLAYER.replace('d.set("alr","yes");', "") });
-    const error = await loadPlayer({ fetch, playerId: "d0000001" }).catch((reason: unknown) => reason);
-    expect(YtdlError.is(error, "PLAYER_SOLVE_FAILED")).toBe(true);
-    expect((error as YtdlError).cause).toBeInstanceOf(Error);
+  test.each([
+    ["a script answering 404", "d0000001", undefined, "Could not load player d0000001", "REQUEST_FAILED"],
+    [
+      "a player without the URL builder",
+      "d0000002",
+      PLAYER.replace('d.set("alr","yes");', ""),
+      "Could not prepare player d0000002",
+      undefined,
+    ],
+  ] as const)("%s fails to load as PLAYER_SOLVE_FAILED naming the player", async (_, id, body, message, causeCode) => {
+    const { fetch } = youtube(body === undefined ? {} : { [id]: body });
+    const error = await solveError(loadPlayer({ fetch, playerId: id }));
+    expect(error.code).toBe("PLAYER_SOLVE_FAILED");
+    expect(error.message).toBe(message);
+    expect(error.cause).toBeInstanceOf(Error);
+    if (causeCode) expect(YtdlError.is(error.cause, causeCode)).toBe(true);
   });
 
   test("concurrent loads of one version fetch and prepare it once", async () => {
