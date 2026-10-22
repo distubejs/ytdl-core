@@ -66,11 +66,15 @@ export async function send(fetchFn: typeof fetch, url: string, init: RequestInit
   }
 }
 
+export function statusError(status: number, what: string, detail = ""): YtdlError {
+  const code: YtdlErrorCode = status === 429 ? "RATE_LIMITED" : "REQUEST_FAILED";
+  return new YtdlError(code, `${what} answered HTTP ${status}${detail ? ` (${detail})` : ""}`);
+}
+
 export function expectOk(response: Response, what: string): Response {
   if (response.ok) return response;
   response.body?.cancel().catch(ignore);
-  const code: YtdlErrorCode = response.status === 429 ? "RATE_LIMITED" : "REQUEST_FAILED";
-  throw new YtdlError(code, `${what} answered HTTP ${response.status}`);
+  throw statusError(response.status, what);
 }
 
 export async function bodyText(

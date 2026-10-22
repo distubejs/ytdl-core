@@ -470,6 +470,28 @@ describe("attempt attribution", () => {
         ],
       },
     },
+    "InnerTube's error answer reaches the attempt": {
+      clients: [Client.Tv],
+      routes: {
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false": () =>
+          Response.json(
+            { error: { code: 400, status: "FAILED_PRECONDITION", message: "Precondition check failed." } },
+            { status: 400 },
+          ),
+      },
+      player: () => playable(ID),
+      error: {
+        code: "REQUEST_FAILED",
+        attempts: [
+          {
+            client: "tv",
+            step: "request",
+            code: "REQUEST_FAILED",
+            reason: expect.stringMatching(/FAILED_PRECONDITION.*Precondition check failed\./u),
+          },
+        ],
+      },
+    },
     "a player script answering 404 fails its rung at the player step": {
       clients: [Client.Tv],
       playerId: "f0000404",

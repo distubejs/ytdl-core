@@ -1,6 +1,6 @@
 import { BROWSER, type ClientDefinition, CLIENTS, type Client, WEB, YOUTUBE_ORIGIN } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
-import { abortable, bodyText, expectOk, fetchText, ignore, send } from "./http.ts";
+import { abortable, bodyText, fetchText, ignore, send, statusError } from "./http.ts";
 import { at, isRecord, type Json, str, ytcfg } from "./json.ts";
 
 type Identity = Pick<ClientDefinition, "name" | "nameId" | "version" | "userAgent" | "context" | "origin">;
@@ -226,7 +226,8 @@ export class InnerTube {
       response.body?.cancel().catch(ignore);
       throw new YtdlError("NOT_FOUND", request.notFound);
     }
-    const text = await bodyText(expectOk(response, what), signal, what);
+    if (!response.ok) throw await answerError(response, signal, what);
+    const text = await bodyText(response, signal, what);
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -236,4 +237,15 @@ export class InnerTube {
     if (!isRecord(json)) throw new YtdlError("REQUEST_FAILED", `${what} returned no object`);
     return json;
   }
+}
+
+async function answerError(response: Response, signal: AbortSignal | undefined, what: string): Promise<YtdlError> {
+  const body = await bodyText(response, signal, what).catch(() => "");
+  signal?.throwIfAborted();
+  let error: unknown;
+  try {
+    error = at(JSON.parse(body), "error");
+  } catch {}
+  const detail = [str(at(error, "status")), str(at(error, "message"))].filter(Boolean).join(": ");
+  return statusError(response.status, what, detail);
 }
