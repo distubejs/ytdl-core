@@ -15,27 +15,78 @@ import {
   thumbnails,
 } from "./json.ts";
 import type { Thumbnail } from "./info.ts";
+import { parsePlaylistId } from "./url.ts";
 
 /** One video in search results, a playlist or a related list. */
 export interface VideoSummary {
   readonly id: string;
+  /** `https://www.youtube.com/watch?v=<id>`. */
+  readonly url: string;
   readonly title: string;
-  readonly author: { readonly id: string | undefined; readonly name: string | undefined };
+  readonly author: {
+    readonly id: string | undefined;
+    readonly name: string | undefined;
+    /** The channel page. */
+    readonly url: string | undefined;
+    readonly thumbnails: readonly Thumbnail[];
+    /** True when an owner badge marks the channel verified; false also when the answer shows no owner badges. */
+    readonly verified: boolean;
+    /** Owner badges as YouTube labels them, such as `Verified` or `Official Artist Channel`. */
+    readonly badges: readonly string[];
+  };
   readonly lengthSeconds: number | undefined;
   readonly viewCount: number | undefined;
   readonly thumbnails: readonly Thumbnail[];
+  /** Labels such as `4K`, `CC` or `New`. */
+  readonly badges: readonly string[];
   readonly isLive: boolean;
+  readonly isUpcoming: boolean;
+  /** A scheduled premiere's start in epoch milliseconds. */
+  readonly upcomingAt: number | undefined;
+}
+
+/** One playlist in search results. */
+export interface PlaylistSummary {
+  readonly id: string;
+  /** The URL {@link PlaylistInfo} carries. */
+  readonly url: string;
+  readonly title: string;
+  readonly author: VideoSummary["author"];
+  readonly videoCount: number | undefined;
+  /** As YouTube words it, such as `Updated 2 days ago`. */
+  readonly updatedText: string | undefined;
+  readonly thumbnails: readonly Thumbnail[];
 }
 
 export interface PlaylistInfo {
   readonly id: string;
   readonly url: string;
   readonly title: string | undefined;
+  readonly description: string | undefined;
   readonly author: VideoSummary["author"];
   readonly thumbnails: readonly Thumbnail[];
+  readonly videoCount: number | undefined;
+  readonly viewCount: number | undefined;
   /** Entries in playlist order, without the ones YouTube marks unplayable. */
   readonly videos: readonly VideoSummary[];
 }
+
+/**
+ * What `search` returns, for its `type` option.
+ * @enum
+ */
+export const SearchType = {
+  /** {@link VideoSummary} values. */
+  Video: "video",
+  /** {@link PlaylistSummary} values. */
+  Playlist: "playlist",
+} as const;
+
+export type SearchType = (typeof SearchType)[keyof typeof SearchType];
+
+// Search params `EgIQAQ==` and `EgIQAw==` select the "Videos" and "Playlists" type filters.
+const FILTERS: Readonly<Record<SearchType, string>> = { video: "EgIQAQ%3D%3D", playlist: "EgIQAw%3D%3D" };
+const YOUTUBE = "https://www.youtube.com";
 
 const SUGGEST_URL = "https://suggestqueries-clients6.youtube.com/complete/search";
 const SUMMARY_KINDS = ["videoRenderer", "compactVideoRenderer", "playlistVideoRenderer", "lockupViewModel"];
@@ -53,8 +104,85 @@ export function checkLimit(limit: number | undefined): number | undefined {
   return limit;
 }
 
-function byline(value: unknown): VideoSummary["author"] {
-  return { id: str(at(value, "runs", 0, "navigationEndpoint", "browseEndpoint", "browseId")), name: text(value) };
+const isSearchType = (value: unknown): value is SearchType => Object.values<unknown>(SearchType).includes(value);
+
+export function checkSearchType(type: SearchType | undefined): SearchType {
+  if (type === undefined) return SearchType.Video;
+  if (!isSearchType(type)) throw new YtdlError("INVALID_ARGUMENT", "type must be a SearchType value");
+  return type;
+}
+
+export function checkSafeSearch(safeSearch: boolean | undefined): boolean {
+  if (safeSearch !== undefined && typeof safeSearch !== "boolean") {
+    throw new YtdlError("INVALID_ARGUMENT", "safeSearch must be a boolean");
+  }
+  return safeSearch ?? false;
+}
+
+interface OwnerBadge {
+  readonly label: string | undefined;
+  readonly verified: boolean;
+}
+
+function owner(
+  id: string | undefined,
+  name: string | undefined,
+  path: string | undefined,
+  avatars: readonly Thumbnail[],
+  badges: readonly OwnerBadge[],
+): VideoSummary["author"] {
+  return {
+    id,
+    name,
+    url: path?.startsWith("/") ? `${YOUTUBE}${path}` : id ? `${YOUTUBE}/channel/${id}` : undefined,
+    thumbnails: avatars,
+    verified: badges.some((badge) => badge.verified),
+    badges: badges.flatMap((badge) => badge.label ?? []),
+  };
+}
+
+function byline(value: unknown, badges: readonly OwnerBadge[] = [], avatars: readonly Thumbnail[] = []) {
+  const endpoint = at(value, "runs", 0, "navigationEndpoint");
+  return owner(
+    str(at(endpoint, "browseEndpoint", "browseId")),
+    text(value),
+    str(at(endpoint, "commandMetadata", "webCommandMetadata", "url")) ??
+      str(at(endpoint, "browseEndpoint", "canonicalBaseUrl")),
+    avatars,
+    badges,
+  );
+}
+
+const rendererOwnerBadges = (renderer: Json): OwnerBadge[] =>
+  list(at(renderer, "ownerBadges")).map((badge) => {
+    const meta = at(badge, "metadataBadgeRenderer");
+    return {
+      label: str(at(meta, "tooltip")) ?? str(at(meta, "accessibilityData", "label")),
+      verified: /VERIFIED/u.test(String(at(meta, "style"))),
+    };
+  });
+
+function lockupOwner(metadata: unknown): VideoSummary["author"] {
+  const part = at(metadata, "metadata", "contentMetadataViewModel", "metadataRows", 0, "metadataParts", 0);
+  const endpoint = at(part, "text", "commandRuns", 0, "onTap", "innertubeCommand");
+  const icon = at(part, "icon");
+  const image = at(metadata, "image");
+  return owner(
+    str(at(endpoint, "browseEndpoint", "browseId")) ??
+      str(collect(image, "browseEndpoint").map((browse) => at(browse, "browseId"))[0]),
+    text(at(part, "text")),
+    str(at(endpoint, "browseEndpoint", "canonicalBaseUrl")) ??
+      str(at(endpoint, "commandMetadata", "webCommandMetadata", "url")),
+    thumbnails(collect(image, "avatarViewModel").map((avatar) => at(avatar, "image", "sources"))[0]),
+    isRecord(icon)
+      ? [
+          {
+            label: str(at(icon, "accessibilityLabel")),
+            verified: /CHECK_CIRCLE|AUDIO_BADGE/u.test(String(at(icon, "name"))),
+          },
+        ]
+      : [],
+  );
 }
 
 function rendererSummary(renderer: Json): VideoSummary | undefined {
@@ -67,16 +195,33 @@ function rendererSummary(renderer: Json): VideoSummary | undefined {
     (at(renderer, "lengthText") === undefined &&
       at(renderer, "lengthSeconds") === undefined &&
       at(renderer, "upcomingEventData") === undefined);
+  const startTime = num(at(renderer, "upcomingEventData", "startTime"));
   return {
     id,
+    url: watchUrl(id),
     title,
-    author: byline(at(renderer, "ownerText") ?? at(renderer, "longBylineText") ?? at(renderer, "shortBylineText")),
+    author: byline(
+      at(renderer, "ownerText") ?? at(renderer, "longBylineText") ?? at(renderer, "shortBylineText"),
+      rendererOwnerBadges(renderer),
+      thumbnails(
+        at(
+          renderer,
+          "channelThumbnailSupportedRenderers",
+          "channelThumbnailWithLinkRenderer",
+          "thumbnail",
+          "thumbnails",
+        ),
+      ),
+    ),
     lengthSeconds: isLive
       ? undefined
       : (num(at(renderer, "lengthSeconds")) ?? parseClock(text(at(renderer, "lengthText")))),
     viewCount: parseAbbreviated(text(at(renderer, "viewCountText")) ?? text(at(renderer, "shortViewCountText"))),
     thumbnails: thumbnails(at(renderer, "thumbnail", "thumbnails")),
+    badges: list(at(renderer, "badges")).flatMap((badge) => str(at(badge, "metadataBadgeRenderer", "label")) ?? []),
     isLive,
+    isUpcoming: at(renderer, "upcomingEventData") !== undefined,
+    upcomingAt: startTime === undefined ? undefined : startTime * 1000,
   };
 }
 
@@ -87,20 +232,53 @@ function lockupSummary(lockup: Json): VideoSummary | undefined {
   const title = text(at(metadata, "title"));
   if (!id || !title) return undefined;
   const badges = collect(lockup, "thumbnailBadgeViewModel").map((badge) => str(at(badge, "text")) ?? "");
+  const isLive = badges.some((badge) => /^live$/iu.test(badge));
   // Rows are [channel] then [views, age]; the views part has no "views" word for music.
   const rows = at(metadata, "metadata", "contentMetadataViewModel", "metadataRows");
-  const part = (row: number, index: number) => text(at(rows, row, "metadataParts", index, "text"));
   return {
     id,
+    url: watchUrl(id),
     title,
-    author: {
-      id: str(collect(at(metadata, "image"), "browseEndpoint").map((endpoint) => at(endpoint, "browseId"))[0]),
-      name: part(0, 0),
-    },
+    author: lockupOwner(metadata),
     lengthSeconds: badges.map(parseClock).find((value) => value !== undefined),
-    viewCount: parseAbbreviated(part(1, 0)),
+    viewCount: parseAbbreviated(text(at(rows, 1, "metadataParts", 0, "text"))),
     thumbnails: thumbnails(at(lockup, "contentImage", "thumbnailViewModel", "image", "sources")),
-    isLive: badges.some((badge) => /^live$/iu.test(badge)),
+    badges: badges.filter((badge) => badge !== "" && parseClock(badge) === undefined && !/^live$/iu.test(badge)),
+    isLive,
+    isUpcoming: false,
+    upcomingAt: undefined,
+  };
+}
+
+// Byline and description rows carry a row extension, and video previews and "View full playlist" are links.
+function playlistSummary(lockup: Json): PlaylistSummary | undefined {
+  if (at(lockup, "contentType") !== "LOCKUP_CONTENT_TYPE_PLAYLIST") return undefined;
+  const id = str(at(lockup, "contentId"));
+  const metadata = at(lockup, "metadata", "lockupMetadataViewModel");
+  const title = text(at(metadata, "title"));
+  if (!id || !title || parsePlaylistId(id) !== id) return undefined;
+  const updated = list(at(metadata, "metadata", "contentMetadataViewModel", "metadataRows"))
+    .filter((row) => at(row, "lockupContentMetadataRowExtension") === undefined)
+    .map((row) => at(row, "metadataParts", 0, "text"))
+    .find((part) => part !== undefined && at(part, "commandRuns") === undefined);
+  return {
+    id,
+    url: playlistUrl(id),
+    title,
+    author: lockupOwner(metadata),
+    videoCount: parseAbbreviated(str(at(collect(lockup, "thumbnailBadgeViewModel")[0], "text"))),
+    updatedText: text(updated),
+    thumbnails: thumbnails(
+      at(
+        lockup,
+        "contentImage",
+        "collectionThumbnailViewModel",
+        "primaryThumbnail",
+        "thumbnailViewModel",
+        "image",
+        "sources",
+      ),
+    ),
   };
 }
 
@@ -122,23 +300,33 @@ function summaries(value: unknown, found: VideoSummary[] = []): VideoSummary[] {
   return found;
 }
 
-// Shelves nest videos inside a result, so only the section's own entries count.
-function searchResults(page: Json): VideoSummary[] {
-  return collect(page, "itemSectionRenderer").flatMap((section) =>
-    list(at(section, "contents")).flatMap((item) =>
-      SUMMARY_KINDS.flatMap((kind) => {
-        const value = at(item, kind);
-        const video = isRecord(value) ? summary(kind, value) : undefined;
-        return video ? [video] : [];
-      }),
-    ),
-  );
-}
+const watchUrl = (id: string) => `${YOUTUBE}/watch?v=${id}`;
+const playlistUrl = (id: string) => `${YOUTUBE}/playlist?list=${id}`;
 
-function withoutRepeats(videos: readonly VideoSummary[], seen = new Set<string>()): VideoSummary[] {
-  return videos.filter((video) => {
-    if (seen.has(video.id)) return false;
-    seen.add(video.id);
+// Shelves nest videos inside a result, so only the section's own entries count.
+const sectionItems = (page: Json) =>
+  collect(page, "itemSectionRenderer").flatMap((section) => list(at(section, "contents")));
+
+const videoResults = (page: Json): VideoSummary[] =>
+  sectionItems(page).flatMap((item) =>
+    SUMMARY_KINDS.flatMap((kind) => {
+      const value = at(item, kind);
+      const video = isRecord(value) ? summary(kind, value) : undefined;
+      return video ? [video] : [];
+    }),
+  );
+
+const playlistResults = (page: Json): PlaylistSummary[] =>
+  sectionItems(page).flatMap((item) => {
+    const lockup = at(item, "lockupViewModel");
+    const playlist = isRecord(lockup) ? playlistSummary(lockup) : undefined;
+    return playlist ? [playlist] : [];
+  });
+
+function withoutRepeats<T extends { readonly id: string }>(entries: readonly T[], seen = new Set<string>()): T[] {
+  return entries.filter((entry) => {
+    if (seen.has(entry.id)) return false;
+    seen.add(entry.id);
     return true;
   });
 }
@@ -185,18 +373,26 @@ function continuation(lists: readonly (readonly unknown[])[]): string | undefine
 // Caps a playlist at 100 000 entries, 100 a page; raise it if a real list is longer.
 const MAX_PAGES = 1000;
 
-interface Paging {
+interface Paging<T> {
   readonly first: Json;
   readonly more: (continuation: string) => Promise<Json>;
-  readonly entries: (page: Json) => readonly VideoSummary[];
+  readonly entries: (page: Json) => readonly T[];
   readonly lists: (page: Json) => readonly (readonly unknown[])[];
   readonly limit: number;
   readonly unique: boolean;
   readonly signal: AbortSignal | undefined;
 }
 
-async function collectPages({ first, more, entries, lists, limit, unique, signal }: Paging): Promise<VideoSummary[]> {
-  const videos: VideoSummary[] = [];
+async function collectPages<T extends { readonly id: string }>({
+  first,
+  more,
+  entries,
+  lists,
+  limit,
+  unique,
+  signal,
+}: Paging<T>): Promise<T[]> {
+  const videos: T[] = [];
   const seen = new Set<string>();
   const followed = new Set<string>();
   for (let page = first, pages = 1; ; pages++) {
@@ -210,22 +406,51 @@ async function collectPages({ first, more, entries, lists, limit, unique, signal
   }
 }
 
-export async function searchVideos(
+export interface SearchRequest {
+  readonly safeSearch: boolean;
+  readonly limit: number;
+  readonly signal: AbortSignal | undefined;
+}
+
+async function searchPages<T extends { readonly id: string }>(
   innertube: InnerTube,
   query: string,
-  limit: number,
-  signal: AbortSignal | undefined,
-): Promise<VideoSummary[]> {
+  type: SearchType,
+  entries: (page: Json) => readonly T[],
+  { safeSearch, limit, signal }: SearchRequest,
+): Promise<T[]> {
   const visitorData = await innertube.visitorData(signal);
   return collectPages({
-    first: await innertube.search({ query }, visitorData, signal),
-    more: (token) => innertube.search({ continuation: token }, visitorData, signal),
-    entries: searchResults,
+    first: await innertube.search({ query, params: FILTERS[type] }, safeSearch, visitorData, signal),
+    more: (token) => innertube.search({ continuation: token }, safeSearch, visitorData, signal),
+    entries,
     lists: searchLists,
     limit,
     unique: true,
     signal,
   });
+}
+
+export const searchVideos = (innertube: InnerTube, query: string, request: SearchRequest) =>
+  searchPages(innertube, query, SearchType.Video, videoResults, request);
+
+export const searchPlaylists = (innertube: InnerTube, query: string, request: SearchRequest) =>
+  searchPages(innertube, query, SearchType.Playlist, playlistResults, request);
+
+// The page header lists "Playlist", the video count and the view count as parts after its byline row.
+function headerCounts(header: unknown, pageHeader: unknown): Pick<PlaylistInfo, "videoCount" | "viewCount"> {
+  if (header !== undefined) {
+    return {
+      videoCount: parseAbbreviated(text(at(header, "numVideosText"))),
+      viewCount: parseAbbreviated(text(at(header, "viewCountText"))),
+    };
+  }
+  const [videos, views] = list(at(pageHeader, "metadata", "contentMetadataViewModel", "metadataRows"))
+    .slice(1)
+    .flatMap((row) => list(at(row, "metadataParts")))
+    .flatMap((part) => text(at(part, "text")) ?? [])
+    .filter((part) => /\d/u.test(part));
+  return { videoCount: parseAbbreviated(videos), viewCount: parseAbbreviated(views) };
 }
 
 export async function browsePlaylist(
@@ -253,13 +478,18 @@ export async function browsePlaylist(
   });
   return {
     id,
-    url: `https://www.youtube.com/playlist?list=${id}`,
+    url: playlistUrl(id),
     title:
       text(at(metadata, "title")) ??
       text(at(header, "title")) ??
       text(at(pageHeader, "title", "dynamicTextViewModel", "text")),
+    description:
+      str(at(metadata, "description")) ??
+      text(at(pageHeader, "description", "descriptionPreviewViewModel", "description")) ??
+      text(at(header, "descriptionText")),
     author: byline(at(collect(first, "videoOwnerRenderer")[0], "title") ?? at(header, "ownerText")),
     thumbnails: thumbnails(at(collect(first, "playlistVideoThumbnailRenderer")[0], "thumbnail", "thumbnails")),
+    ...headerCounts(header, pageHeader),
     videos,
   };
 }

@@ -9,6 +9,7 @@ import {
   type Filter,
   type Media,
   Quality,
+  SearchType,
   Ytdl,
   type VideoInfo,
 } from "../../src/index.ts";
@@ -254,6 +255,46 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       const playlist = await yt.getPlaylist(PLAYLIST);
       expect(playlist.videos.length).toBeGreaterThan(100);
       rows.push(`  playlist ${PLAYLIST}: ${playlist.videos.length} entries`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery playlist search returns playlists getPlaylist expands",
+    async () => {
+      const [found] = await yt.search("lofi hip hop", { type: SearchType.Playlist, limit: 3 });
+      expect(found?.url).toBe(`https://www.youtube.com/playlist?list=${found?.id}`);
+      const playlist = await yt.getPlaylist(found?.id ?? "", { limit: 5 });
+      expect(playlist.videos.length).toBeGreaterThan(0);
+      rows.push(`  playlist search: first ${found?.id}, ${found?.videoCount} videos`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery safe search resolves",
+    async () => {
+      const videos = await yt.search(SEARCH_QUERY, { safeSearch: true, limit: 5 });
+      expect(videos.length).toBeGreaterThan(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery expands a channel handle's uploads",
+    async () => {
+      const uploads = await yt.getPlaylist("https://www.youtube.com/@TaylorSwift", { limit: 5 });
+      expect(uploads.id).toMatch(/^UU[\w-]{22}$/u);
+      expect(uploads.videos).toHaveLength(5);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery marks a verified channel's results",
+    async () => {
+      const videos = await yt.search("taylor swift", { limit: 10 });
+      expect(videos.some((video) => video.author.verified)).toBe(true);
     },
     TIMEOUT,
   );

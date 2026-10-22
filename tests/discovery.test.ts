@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
-import { Ytdl, YtdlError, YtdlErrorCode } from "../src/index.ts";
+import { SearchType, Ytdl, YtdlError, YtdlErrorCode, type YtdlOptions } from "../src/index.ts";
 import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
 
 // Recorded 2026-10-20 from WEB with visitor data. Search: "blender open movie" with the video filter, first and
@@ -9,8 +9,12 @@ import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
 // Unbadged, recorded 2026-10-21 with the video filter: NASA's ISS stream, live without a badge, from "nasa live", then
 // NASA's scheduled "Artemis Acceleration" stream, from its title. Playlist: PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5 (NASA,
 // Perseverance Mars Rover), both pages. Short playlist: PL6B3937A5D230E335 (Blender, Official Blender Open Movies), one
-// page with only a section-level continuation. Missing: the answer for a well-formed unknown playlist ID. Every answer is trimmed to the parsed fields; tracking and visitor
-// data are gone, and the search continuation tokens, which encode third-party IDs, are replaced by labels.
+// page with only a section-level continuation, and its page header rows and description recorded 2026-10-22. Missing: the
+// answer for a well-formed unknown playlist ID. Recorded 2026-10-22: playlists, the playlist filter for "taylor swift"
+// and "lofi hip hop" across two pages, its artist-channel list without its count badge and one list relabelled as an
+// RDEM mix; badges, "taylor swift" with the video filter, an official-artist result and one without badges; resolve,
+// /@TaylorSwift; uploads, that channel's uploads list. Every answer is trimmed to the parsed fields; tracking, visitor
+// data and onesie URLs are gone, and the search continuation tokens, which encode third-party IDs, are replaced by labels.
 const SEARCH_PAGE = fixture("search-web.json");
 const SEARCH_NEXT_PAGE = fixture("search-continuation-web.json");
 const MIXED_PAGE = fixture("search-mixed-web.json");
@@ -21,12 +25,19 @@ const PLAYLIST_PAGE = fixture("browse-playlist-web.json");
 const PLAYLIST_NEXT_PAGE = fixture("browse-continuation-web.json");
 const SHORT_PLAYLIST_PAGE = fixture("browse-short-playlist-web.json");
 const MISSING_PLAYLIST = fixture("browse-missing-web.json");
+const PLAYLISTS_PAGE = fixture("search-playlists-web.json");
+const PLAYLISTS_NEXT_PAGE = fixture("search-playlists-continuation-web.json");
+const BADGES_PAGE = fixture("search-badges-web.json");
+const RESOLVED_CHANNEL = fixture("resolve-channel-web.json");
+const UPLOADS_PAGE = fixture("browse-uploads-web.json");
+const CHANNEL_ID = "UCqECaJ8Gagnn7YCbPEzWH6g";
 const NEXT = fixture("next-web.json");
 const SUGGESTIONS = readFileSync(new URL("./fixtures/innertube/suggest-blender.txt", import.meta.url), "utf8");
 const VIDEO_ID = "aqz-KE-bpKQ";
 
 const SEARCH = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
 const BROWSE = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false";
+const RESOLVE = "https://www.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false";
 
 type Page = Record<string, unknown>;
 interface Item {
@@ -106,7 +117,7 @@ function numberedPages(last: number): () => Response {
   };
 }
 
-function setup(routes: Record<string, () => Response>, options: { readonly cookie?: string } = {}) {
+function setup(routes: Record<string, () => Response>, options: Omit<YtdlOptions, "fetch"> = {}) {
   const yt = fakeYouTube({ player: () => playable(VIDEO_ID), next: NEXT, routes });
   const bodies = (url: string) =>
     yt.requests.filter((request) => request.url === url).map((request) => JSON.parse(String(request.init?.body)));
@@ -439,5 +450,158 @@ describe("discovery session", () => {
     expect(headers.get("X-Goog-Visitor-Id")).toBe("VISITOR-1");
     expect(headers.get("Cookie")).toBe("SOCS=CAI");
     expect(headers.get("Authorization")).toBeNull();
+  });
+});
+
+describe("playlist search", () => {
+  const FIRST = [
+    "PLXIclLvfETS0GFbNbRpwCgh1CGwO6hLrv",
+    "PLxA687tYuMWgeHrs69WUDoU0PZxYdEzew",
+    "PLINj2JJM1jxMKUSiMcZPYvORDFh5sa8XH",
+  ];
+
+  test("a limit past the first page fetches the next page once, in order, without the mix", async () => {
+    const { ytdl, bodies } = setup({ [SEARCH]: pages(PLAYLISTS_PAGE, PLAYLISTS_NEXT_PAGE) });
+
+    const playlists = await ytdl.search("taylor swift", { type: SearchType.Playlist, limit: 4 });
+
+    expect(playlists.map((playlist) => playlist.id)).toEqual([...FIRST, "PLmU8B4gZ41icKdheg4d2KZBgDR1wSWfbH"]);
+    expect(playlists[0]?.url).toBe(`https://www.youtube.com/playlist?list=${FIRST[0]}`);
+    expect(bodies(SEARCH).map((body) => body.continuation)).toEqual([undefined, "PLAYLIST-PAGE-2"]);
+    expect(bodies(SEARCH)[0]).toMatchObject({ query: "taylor swift", params: "EgIQAw%3D%3D" });
+  });
+
+  test("a playlist carries its owner, count badge and update text", async () => {
+    const { ytdl } = setup({ [SEARCH]: pages(PLAYLISTS_PAGE) });
+
+    const [updated, verified, artist] = await ytdl.search("taylor swift", { type: SearchType.Playlist, limit: 3 });
+
+    expect(updated).toMatchObject({ videoCount: 11, updatedText: "Updated 2 days ago" });
+    expect(updated?.author).toMatchObject({ verified: false, badges: [] });
+    expect(verified).toMatchObject({ title: "Taylor Swift Greatest Hits", videoCount: 186, updatedText: undefined });
+    expect(verified?.author).toEqual({
+      id: "UCYXIviXPAaaaU_AOotpXTAw",
+      name: "Revive Music",
+      url: "https://www.youtube.com/@revive",
+      thumbnails: [],
+      verified: true,
+      badges: ["Verified"],
+    });
+    expect(verified?.thumbnails.length).toBeGreaterThan(0);
+    expect(artist).toMatchObject({ videoCount: undefined, updatedText: undefined });
+    expect(artist?.author).toMatchObject({ id: CHANNEL_ID, verified: true, badges: ["Official Artist Channel"] });
+  });
+});
+
+describe("safe search", () => {
+  test("asks for restricted mode on every page", async () => {
+    const { ytdl, bodies } = setup({ [SEARCH]: pages(SEARCH_PAGE, SEARCH_NEXT_PAGE) });
+
+    await ytdl.search("blender open movie", { safeSearch: true, limit: videoIds(SEARCH_PAGE).length + 1 });
+
+    expect(bodies(SEARCH).map((body) => body.context.user)).toEqual([
+      { enableSafetyMode: true },
+      { enableSafetyMode: true },
+    ]);
+  });
+
+  test("a default search does not ask for restricted mode", async () => {
+    const { ytdl, bodies } = setup({ [SEARCH]: pages(SEARCH_PAGE) });
+    await ytdl.search("blender open movie", { limit: 1 });
+    expect(bodies(SEARCH)[0].context.user).toBeUndefined();
+  });
+
+  test.each([
+    ["an unknown type", (ytdl: Ytdl) => ytdl.search("nasa", { type: "channel" as SearchType })],
+    ["a non-boolean safeSearch", (ytdl: Ytdl) => ytdl.search("nasa", { safeSearch: "yes" as unknown as boolean })],
+  ])("%s rejects INVALID_ARGUMENT before any request", async (_, call) => {
+    const { yt, ytdl } = setup({});
+    expect((await rejection(call(ytdl))).code).toBe("INVALID_ARGUMENT");
+    expect(yt.requests).toHaveLength(0);
+  });
+});
+
+describe("summary details", () => {
+  test("a result carries its URL, badges and owner badges", async () => {
+    const { ytdl } = setup({ [SEARCH]: pages(BADGES_PAGE) });
+
+    const [artist, plain] = await ytdl.search("taylor swift", { limit: 2 });
+
+    expect(artist).toMatchObject({
+      id: "1FVF-9KQiPo",
+      url: "https://www.youtube.com/watch?v=1FVF-9KQiPo",
+      badges: ["4K"],
+    });
+    expect(artist?.author).toMatchObject({
+      id: CHANNEL_ID,
+      url: `https://www.youtube.com/channel/${CHANNEL_ID}`,
+      verified: true,
+      badges: ["Official Artist Channel"],
+    });
+    expect(artist?.author.thumbnails.length).toBeGreaterThan(0);
+    expect(plain).toMatchObject({ badges: [], author: { verified: false, badges: [] } });
+  });
+
+  test("a scheduled premiere is upcoming at its start time", async () => {
+    const { ytdl } = setup({ [SEARCH]: pages(UNBADGED_PAGE) });
+
+    const videos = await ytdl.search("nasa", { limit: 100 });
+
+    expect(videos.find((video) => video.id === "pAKqJxuxDgk")).toMatchObject({
+      isUpcoming: true,
+      upcomingAt: 1_792_778_400_000,
+    });
+    expect(videos.find((video) => video.id === "awQzjn72bI0")).toMatchObject({
+      isUpcoming: false,
+      upcomingAt: undefined,
+    });
+  });
+
+  test("a playlist header gives its description and counts", async () => {
+    const { ytdl } = setup({ [BROWSE]: pages(PLAYLIST_PAGE, PLAYLIST_NEXT_PAGE) });
+
+    const playlist = await ytdl.getPlaylist(PLAYLIST_ID, { limit: 1 });
+
+    expect(playlist).toMatchObject({ videoCount: 113, viewCount: 1_259_717 });
+    expect(playlist.description).toStartWith("Perseverance is searching for signs of habitable conditions on Mars");
+  });
+
+  test("an instance's UTC offset goes with every InnerTube request", async () => {
+    const { ytdl, bodies } = setup({ [SEARCH]: pages(SEARCH_PAGE) }, { utcOffsetMinutes: 420 });
+    await ytdl.search("blender open movie", { limit: 1 });
+    expect(bodies(SEARCH)[0].context.client.utcOffsetMinutes).toBe(420);
+  });
+
+  test("a fractional UTC offset rejects INVALID_ARGUMENT", () => {
+    expect(() => new Ytdl({ utcOffsetMinutes: 30.5 })).toThrow(expect.objectContaining({ code: "INVALID_ARGUMENT" }));
+  });
+});
+
+describe("channel uploads", () => {
+  test("a channel ID browses its uploads list with no resolve request", async () => {
+    const { yt, ytdl, bodies } = setup({ [BROWSE]: pages(UPLOADS_PAGE) });
+
+    const uploads = await ytdl.getPlaylist(CHANNEL_ID, { limit: 3 });
+
+    expect(bodies(BROWSE)[0].browseId).toBe("VLUUqECaJ8Gagnn7YCbPEzWH6g");
+    expect(yt.requests.some((request) => request.url === RESOLVE)).toBe(false);
+    expect(uploads).toMatchObject({ id: "UUqECaJ8Gagnn7YCbPEzWH6g", videoCount: 669, viewCount: 5_197_045 });
+    expect(uploads.videos.map((video) => video.id)).toEqual(["j8pR1tyoRFc", "mw3kSNIxjqo", "BpR280fXISA"]);
+  });
+
+  test("a handle URL is resolved once, then its uploads are browsed", async () => {
+    const { ytdl, bodies } = setup({ [RESOLVE]: pages(RESOLVED_CHANNEL), [BROWSE]: pages(UPLOADS_PAGE) });
+
+    await ytdl.getPlaylist("https://www.youtube.com/@TaylorSwift", { limit: 3 });
+
+    expect(bodies(RESOLVE).map((body) => body.url)).toEqual(["https://www.youtube.com/@TaylorSwift"]);
+    expect(bodies(BROWSE)[0].browseId).toBe("VLUUqECaJ8Gagnn7YCbPEzWH6g");
+  });
+
+  test("a handle naming no channel rejects NOT_FOUND without browsing", async () => {
+    const { yt, ytdl } = setup({ [RESOLVE]: () => Response.json({ error: { code: 404 } }, { status: 404 }) });
+
+    expect((await rejection(ytdl.getPlaylist("https://www.youtube.com/@nobody-here-0x9q"))).code).toBe("NOT_FOUND");
+    expect(yt.requests.some((request) => request.url === BROWSE)).toBe(false);
   });
 });

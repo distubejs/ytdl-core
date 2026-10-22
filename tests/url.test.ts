@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { YtdlError } from "../src/errors.ts";
-import { getVideoTarget, parsePlaylistId, parseVideoId } from "../src/url.ts";
+import { getPlaylistTarget, getVideoTarget, parsePlaylistId, parseVideoId } from "../src/url.ts";
 
 describe("parseVideoId", () => {
   test.each([
@@ -87,7 +87,37 @@ describe("parsePlaylistId", () => {
     "https://www.youtube.com/watch?v=abcdefghijk&list=RDabcdefghijk",
     "abcdefghijk",
     "https://example.com/playlist?list=PL6B3937A5D230E335",
+    "UCqECaJ8Gagnn7YCbPEzWH6g",
+    "https://www.youtube.com/@TaylorSwift",
   ])("returns undefined for %s", (input) => {
     expect(parsePlaylistId(input)).toBeUndefined();
+  });
+});
+
+describe("getPlaylistTarget", () => {
+  test.each([
+    ["PL6B3937A5D230E335", { id: "PL6B3937A5D230E335" }],
+    ["UCqECaJ8Gagnn7YCbPEzWH6g", { id: "UUqECaJ8Gagnn7YCbPEzWH6g" }],
+    ["https://www.youtube.com/channel/UCqECaJ8Gagnn7YCbPEzWH6g", { id: "UUqECaJ8Gagnn7YCbPEzWH6g" }],
+    ["https://m.youtube.com/@TaylorSwift/", { channel: "https://www.youtube.com/@TaylorSwift" }],
+    ["youtube.com/user/taylorswift", { channel: "https://www.youtube.com/user/taylorswift" }],
+    ["https://www.youtube.com/c/TaylorSwift", { channel: "https://www.youtube.com/c/TaylorSwift" }],
+  ])("%s", (input, expected) => {
+    expect(getPlaylistTarget(input)).toEqual(expected);
+  });
+
+  test.each([
+    "https://www.youtube.com/watch?v=abcdefghijk",
+    "https://www.youtube.com/@TaylorSwift/live",
+    "https://youtu.be/@TaylorSwift",
+    "https://example.com/@TaylorSwift",
+  ])("rejects %s with INVALID_URL", (input) => {
+    let caught: unknown;
+    try {
+      getPlaylistTarget(input);
+    } catch (error) {
+      caught = error;
+    }
+    expect(YtdlError.is(caught, "INVALID_URL")).toBe(true);
   });
 });

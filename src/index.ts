@@ -3,7 +3,7 @@
  * @module ytdl-core
  */
 export { Ytdl } from "./ytdl.ts";
-export type { ListOptions, LookupOptions, YtdlOptions } from "./ytdl.ts";
+export type { ListOptions, LookupOptions, SearchOptions, YtdlOptions } from "./ytdl.ts";
 export { chooseFormat, Quality } from "./formats.ts";
 export type {
   AudioTrack,
@@ -19,7 +19,8 @@ export type {
 export type { Author, Chapter, Storyboard, Thumbnail, VideoDetails, VideoInfo } from "./info.ts";
 export { CaptionFormat } from "./captions.ts";
 export type { CaptionOptions, CaptionTrack } from "./captions.ts";
-export type { PlaylistInfo, VideoSummary } from "./discovery.ts";
+export { SearchType } from "./discovery.ts";
+export type { PlaylistInfo, PlaylistSummary, VideoSummary } from "./discovery.ts";
 export type { DownloadOptions, Media, ProgressEvent, ReadOptions, RetryEvent } from "./delivery/index.ts";
 export { parsePlaylistId, parseVideoId } from "./url.ts";
 export { YtdlError, YtdlErrorCode } from "./errors.ts";

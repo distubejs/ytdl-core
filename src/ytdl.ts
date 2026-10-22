@@ -7,7 +7,18 @@ import { deliver, type Delivery, Media, type Playback, type ResumeRequest } from
 import { checkPlayable, chooseFormat, sameFormat } from "./formats.ts";
 import { parseHlsMaster } from "./delivery/hls.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
-import { browsePlaylist, checkLimit, checkQuery, fetchSuggestions, relatedVideos, searchVideos } from "./discovery.ts";
+import {
+  browsePlaylist,
+  checkLimit,
+  checkQuery,
+  checkSafeSearch,
+  checkSearchType,
+  fetchSuggestions,
+  relatedVideos,
+  SearchType,
+  searchPlaylists,
+  searchVideos,
+} from "./discovery.ts";
 import { basicInfo, type InfoBase } from "./info.ts";
 import { InnerTube } from "./innertube.ts";
 import { at, isRecord, type Json } from "./json.ts";
@@ -16,8 +27,8 @@ import { CaptionFormat, type CaptionOptions } from "./captions.ts";
 import type { DownloadOptions } from "./delivery/index.ts";
 import type { VideoFormat } from "./formats.ts";
 import type { VideoInfo } from "./info.ts";
-import type { PlaylistInfo, VideoSummary } from "./discovery.ts";
-import { getVideoTarget, parsePlaylistId, type VideoTarget } from "./url.ts";
+import type { PlaylistInfo, PlaylistSummary, VideoSummary } from "./discovery.ts";
+import { getPlaylistTarget, getVideoTarget, uploads, type VideoTarget } from "./url.ts";
 import type { GetPoToken } from "./po-token/index.ts";
 import type { Client } from "./clients.ts";
 
@@ -49,6 +60,11 @@ export interface YtdlOptions {
    * @defaultValue `"US"`
    */
   readonly country?: string;
+  /**
+   * InnerTube `utcOffsetMinutes`, which YouTube uses for relative times such as "Updated 2 days ago".
+   * @defaultValue `0`
+   */
+  readonly utcOffsetMinutes?: number;
   /** Pins the player.js version used for solving. */
   readonly playerId?: string;
   /**
@@ -71,6 +87,16 @@ export interface ListOptions extends LookupOptions {
   readonly limit?: number;
 }
 
+export interface SearchOptions extends ListOptions {
+  /**
+   * Videos or playlists.
+   * @defaultValue `SearchType.Video`
+   */
+  readonly type?: SearchType;
+  /** Asks YouTube for restricted-mode results. */
+  readonly safeSearch?: boolean;
+}
+
 /**
  * One YouTube session: visitor data, blocked clients, account and PO tokens belong to the
  * instance. Use one instance per account or network identity.
@@ -86,6 +112,9 @@ export class Ytdl {
     }
     if (options.fetch !== undefined && typeof options.fetch !== "function") {
       throw new YtdlError("INVALID_ARGUMENT", "fetch must be a function");
+    }
+    if (options.utcOffsetMinutes !== undefined && !Number.isInteger(options.utcOffsetMinutes)) {
+      throw new YtdlError("INVALID_ARGUMENT", "utcOffsetMinutes must be an integer");
     }
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -105,7 +134,12 @@ export class Ytdl {
       throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie or getPoToken this instance lacks");
     }
     const fetcher = timed(consented(options.fetch ?? globalThis.fetch.bind(globalThis)), timeoutMs);
-    this.#innertube = new InnerTube({ fetch: fetcher, lang: options.lang, country: options.country });
+    this.#innertube = new InnerTube({
+      fetch: fetcher,
+      lang: options.lang,
+      country: options.country,
+      utcOffsetMinutes: options.utcOffsetMinutes,
+    });
     const auth = options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher });
     const { getPoToken } = options;
     this.#resolver = new Resolver({
@@ -177,26 +211,43 @@ export class Ytdl {
   }
 
   /**
-   * Videos matching `query` in YouTube's rank order, at most `limit` (20 unless set), across as many result
-   * pages as that takes. Channels, playlists and shelves are left out. Discovery requests share the instance's
-   * visitor data and never send the `cookie`.
+   * Videos, or playlists with `type: SearchType.Playlist`, matching `query` in YouTube's rank order, at most `limit`
+   * (20 unless set), across as many result pages as that takes. Channels, shelves and mixes are left out.
+   * Discovery requests share the instance's visitor data and never send the `cookie`.
    */
-  async search(query: string, options: ListOptions = {}): Promise<readonly VideoSummary[]> {
+  search(
+    query: string,
+    options?: SearchOptions & { readonly type?: typeof SearchType.Video },
+  ): Promise<readonly VideoSummary[]>;
+  search(
+    query: string,
+    options: SearchOptions & { readonly type: typeof SearchType.Playlist },
+  ): Promise<readonly PlaylistSummary[]>;
+  search(query: string, options?: SearchOptions): Promise<readonly VideoSummary[] | readonly PlaylistSummary[]>;
+  async search(
+    query: string,
+    options: SearchOptions = {},
+  ): Promise<readonly VideoSummary[] | readonly PlaylistSummary[]> {
     checkQuery(query);
-    const limit = checkLimit(options.limit) ?? 20;
-    return searchVideos(this.#innertube, query, limit, options.signal);
+    const request = {
+      limit: checkLimit(options.limit) ?? 20,
+      safeSearch: checkSafeSearch(options.safeSearch),
+      signal: options.signal,
+    };
+    return checkSearchType(options.type) === SearchType.Playlist
+      ? searchPlaylists(this.#innertube, query, request)
+      : searchVideos(this.#innertube, query, request);
   }
 
   /**
-   * A playlist by ID or by a YouTube URL with a `list` parameter, with its entries in playlist order across
-   * pages: all of them, or the first `limit`. Entries YouTube marks unplayable are left out.
+   * A playlist by ID or by a YouTube URL with a `list` parameter, or a channel's uploads by channel ID or channel URL,
+   * with its entries in playlist order across pages: all of them, or the first `limit`. Entries YouTube marks
+   * unplayable are left out.
    */
   async getPlaylist(playlist: string, options: ListOptions = {}): Promise<PlaylistInfo> {
-    const id = parsePlaylistId(playlist);
-    if (id === undefined) {
-      throw new YtdlError("INVALID_URL", `Not a YouTube playlist URL or ID: ${String(playlist).slice(0, 200)}`);
-    }
+    const target = getPlaylistTarget(playlist);
     const limit = checkLimit(options.limit) ?? Number.POSITIVE_INFINITY;
+    const id = "id" in target ? target.id : uploads(await this.#innertube.channelId(target.channel, options.signal));
     return browsePlaylist(this.#innertube, id, limit, options.signal);
   }
 

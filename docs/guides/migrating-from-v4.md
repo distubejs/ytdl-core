@@ -139,13 +139,39 @@ A format keeps the field names 4.x copied from YouTube, such as `itag`, `mimeTyp
 | `avatar`                       | `thumbnails[0]?.url`                                       |
 | `user`, `external_channel_url` | gone                                                       |
 
-| 4.x `relatedVideo`                                             | v5 `VideoSummary`      |
-| -------------------------------------------------------------- | ---------------------- |
-| `id`, `title`, `isLive`, `thumbnails`                          | unchanged              |
-| `length_seconds`                                               | `lengthSeconds`        |
-| `view_count`, `short_view_count_text`                          | `viewCount`, a number  |
-| `author` (an `Author` or a string), `ucid`, `author_thumbnail` | `author: { id, name }` |
-| `published`, `video_thumbnail`, `richThumbnails`               | gone                   |
+| 4.x `relatedVideo`                                             | v5 `VideoSummary`                                         |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `id`, `title`, `isLive`, `thumbnails`                          | unchanged                                                 |
+| `length_seconds`                                               | `lengthSeconds`                                           |
+| `view_count`, `short_view_count_text`                          | `viewCount`, a number                                     |
+| `author` (an `Author` or a string), `ucid`, `author_thumbnail` | `author: { id, name, url, thumbnails, verified, badges }` |
+| `published`, `video_thumbnail`, `richThumbnails`               | gone                                                      |
+
+## From @distube/ytsr and @distube/ytpl
+
+Both packages are deprecated. `Ytdl#search` and `Ytdl#getPlaylist` cover what they did, on the same instance as `getInfo`.
+
+| ytsr / ytpl                                      | v5                                                                                                                                                             |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ytsr(query, { type: "video" })`                 | `yt.search(query)` or `{ type: SearchType.Video }`                                                                                                             |
+| `ytsr(query, { type: "playlist" })`              | `yt.search(query, { type: SearchType.Playlist })`                                                                                                              |
+| `safeSearch`                                     | `search(query, { safeSearch: true })`                                                                                                                          |
+| `limit`                                          | `limit`; `getPlaylist` without it collects every entry instead of 100                                                                                          |
+| `hl`, `gl`                                       | `new Ytdl({ lang, country })`                                                                                                                                  |
+| `utcOffsetMinutes`                               | `new Ytdl({ utcOffsetMinutes })`                                                                                                                               |
+| `requestOptions`                                 | `new Ytdl({ fetch })`                                                                                                                                          |
+| ytsr result `items`                              | the array `search` returns                                                                                                                                     |
+| ytsr `results` (estimated total), `continuation` | gone                                                                                                                                                           |
+| ytsr `Video`                                     | `VideoSummary`: `name` is `title`, `duration` text is `lengthSeconds`, `views` is `viewCount`, `upcoming` is `upcomingAt`, `thumbnail` is `thumbnails[0]?.url` |
+| ytsr video `author`                              | `author`: `channelID` is `id`, `avatars` and `bestAvatar` are `thumbnails`, `ownerBadges` is `badges`                                                          |
+| ytsr `Playlist`                                  | `PlaylistSummary`: `name` is `title`, `length` is `videoCount`, `owner` is `author`, `publishedAt` is `updatedText`                                            |
+| `ytpl(id)`                                       | `yt.getPlaylist(id)`                                                                                                                                           |
+| ytpl channel ID or channel URL                   | `getPlaylist` expands the channel's uploads                                                                                                                    |
+| ytpl `items`                                     | `videos`, `VideoSummary` values                                                                                                                                |
+| ytpl `total_items`, `views`                      | `videoCount`, `viewCount` as a number                                                                                                                          |
+| ytpl `author.channel_url`                        | `author.url`                                                                                                                                                   |
+| ytpl `visibility`, `last_updated`                | gone                                                                                                                                                           |
+| `ytpl.validateID`, `ytpl.getPlaylistID`          | `parsePlaylistId(input)`, `undefined` instead of throwing; it reads playlist input only                                                                        |
 
 ## Errors
 

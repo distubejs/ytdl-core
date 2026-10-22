@@ -13,6 +13,7 @@ interface InnertubeRequest {
   readonly body?: Json;
   readonly headers?: Readonly<Record<string, string>> | undefined;
   readonly thirdParty?: Json | undefined;
+  readonly user?: Json | undefined;
   readonly notFound?: string;
 }
 
@@ -35,23 +36,24 @@ interface InnerTubeOptions {
   readonly fetch: typeof fetch;
   readonly lang: string | undefined;
   readonly country: string | undefined;
+  readonly utcOffsetMinutes: number | undefined;
 }
 
 // An embedded player request plays only with the host flags and visitor data of an embed page on a third-party site.
 const EMBED_HOST = "https://www.reddit.com/";
-// Search params `EgIQAQ==` select the "Videos" type filter.
-const VIDEOS_ONLY = "EgIQAQ%3D%3D";
 
 export class InnerTube {
   readonly fetch: typeof fetch;
   readonly lang: string;
   readonly country: string;
+  readonly utcOffsetMinutes: number;
   #visitor: Promise<string> | undefined;
 
   constructor(options: InnerTubeOptions) {
     this.fetch = options.fetch;
     this.lang = options.lang ?? "en";
     this.country = options.country ?? "US";
+    this.utcOffsetMinutes = options.utcOffsetMinutes ?? 0;
   }
 
   text(url: string, init: RequestInit, what: string): Promise<string> {
@@ -132,13 +134,15 @@ export class InnerTube {
   }
 
   search(
-    page: { readonly query: string } | { readonly continuation: string },
+    page: { readonly query: string; readonly params: string } | { readonly continuation: string },
+    safeSearch: boolean,
     visitorData: string,
     signal: AbortSignal | undefined,
   ): Promise<Json> {
     return this.#post("search", WEB, signal, {
       visitorData,
-      body: "query" in page ? { query: page.query, params: VIDEOS_ONLY } : { continuation: page.continuation },
+      user: safeSearch ? { enableSafetyMode: true } : undefined,
+      body: "query" in page ? { query: page.query, params: page.params } : { continuation: page.continuation },
     });
   }
 
@@ -151,6 +155,17 @@ export class InnerTube {
       visitorData,
       body: "playlistId" in page ? { browseId: `VL${page.playlistId}` } : { continuation: page.continuation },
     });
+  }
+
+  async channelId(url: string, signal: AbortSignal | undefined): Promise<string> {
+    const answer = await this.#post("navigation/resolve_url", WEB, signal, {
+      visitorData: undefined,
+      body: { url },
+      notFound: `${url} names no channel`,
+    });
+    const id = str(at(answer, "endpoint", "browseEndpoint", "browseId"));
+    if (!id || !/^UC[\w-]{22}$/u.test(id)) throw new YtdlError("NOT_FOUND", `${url} names no channel`);
+    return id;
   }
 
   async channelLiveVideo(url: string, signal: AbortSignal | undefined): Promise<string> {
@@ -209,9 +224,11 @@ export class InnerTube {
               userAgent: identity.userAgent,
               hl: request.hl ?? this.lang,
               gl: this.country,
+              utcOffsetMinutes: this.utcOffsetMinutes,
               visitorData: request.visitorData,
             },
             thirdParty: request.thirdParty,
+            user: request.user,
           },
           videoId: request.videoId,
           contentCheckOk: true,
