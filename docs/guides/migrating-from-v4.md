@@ -17,7 +17,7 @@ const yt = new Ytdl();
 
 The package is ESM-only and has no default export. `import ytdl from "@distube/ytdl-core"` throws, and `require("@distube/ytdl-core")` returns the module namespace, not a function, so `ytdl(url)` fails. Use the named `Ytdl` import shown above.
 
-4.x ran on Node.js `>=20.18.1`. v5 needs `^22.22.2 || ^24.15.0 || >=26.0.0`, or Bun.
+4.15.1 declared Node.js `>=14.0`, and 4.16.0 raised that to `>=20.18.1`. v5 needs `^22.22.2 || ^24.15.0 || >=26.0.0`, or Bun.
 
 ## Functions
 
@@ -34,7 +34,7 @@ The package is ESM-only and has no default export. `import ytdl from "@distube/y
 | `ytdl.createAgent(cookies)`                | `new Ytdl({ cookie })` with the [cookie export](../cookies/) as text |
 | `ytdl.createProxyAgent({ uri }, cookies)`  | `new Ytdl({ fetch, cookie })` with a [proxied fetch](../proxies/)    |
 
-`ytdl.cache` and `ytdl.version` are gone.
+`ytdl.cache` and `ytdl.version` are gone. Every other 4.15.1 export is in the table. v5 exports `Ytdl`, `chooseFormat`, `parseVideoId`, `parsePlaylistId`, `Quality`, `Client`, `DEFAULT_CLIENTS`, `CaptionFormat`, `createPoTokenProvider`, `YtdlError` and `YtdlErrorCode`.
 
 ## Options
 
@@ -49,6 +49,9 @@ The package is ESM-only and has no default export. `import ytdl from "@distube/y
 | `liveBuffer`, `highWaterMark` | unchanged                                                                                                                                                                                    |
 | `lang`                        | `new Ytdl({ lang })`                                                                                                                                                                         |
 | `agent`, `requestOptions`     | `new Ytdl({ fetch })`                                                                                                                                                                        |
+| `fetch` (4.16)                | `new Ytdl({ fetch })`. v5 calls it like the standard `fetch(input, init)`, not with undici `request` options, so set a dispatcher or proxy inside it; see [Proxies](../proxies/)             |
+| `requestCallback`             | none; 4.15.1 never called it                                                                                                                                                                 |
+| `rewriteRequest`              | none; change the URL or init in a wrapper around `fetch`                                                                                                                                     |
 | `IPv6Block`                   | a `fetch` bound to one local address; see [Proxies](../proxies/)                                                                                                                             |
 | `playerClients`               | `new Ytdl({ clients })` with `Client` values; see [Clients](../clients/)                                                                                                                     |
 
@@ -72,7 +75,77 @@ To read the same format again later, for example to seek, keep a [`Media`](../do
 
 ## Formats
 
-A format keeps the field names 4.x copied from YouTube, such as `itag`, `mimeType`, `bitrate`, `initRange`, `audioQuality` and `audioTrack`, with numeric strings parsed to numbers. Two differ: `url` is already solved, and `signatureCipher` is gone. ytdl-core's own additions are listed in [Choose a format](../formats/#what-a-format-carries). DRM and OTF formats are listed with `isDrm` and `isOtf`, and `chooseFormat` skips them.
+A format keeps the field names 4.x copied from YouTube, such as `itag`, `mimeType`, `bitrate`, `initRange`, `audioQuality`, `audioTrack` and `colorInfo`, with numeric strings parsed to numbers. Two differ: `url` is already solved, and `signatureCipher` is gone. ytdl-core's own additions are listed in [Choose a format](../formats/#what-a-format-carries). DRM and OTF formats are listed with `isDrm` and `isOtf`, and `chooseFormat` skips them.
+
+| 4.x `videoFormat`                                                                            | v5 `VideoFormat`                                                                             |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `contentLength`, `lastModified`, `audioSampleRate`, `approxDurationMs`                       | numbers, not strings; `lastModified` is microseconds                                         |
+| `initRange`, `indexRange`                                                                    | `{ start, end }` as numbers                                                                  |
+| `url`                                                                                        | optional; a format without one streams over SABR                                             |
+| `signatureCipher`                                                                            | gone, the URL is solved                                                                      |
+| `isDashMPD`                                                                                  | gone; live DASH formats have `isLive` and no `isHLS`                                         |
+| `quality`, `qualityLabel`                                                                    | `string`, not a literal union                                                                |
+| `container`, `codecs`, `videoCodec`, `audioCodec`, `hasVideo`, `hasAudio`, `isLive`, `isHLS` | unchanged                                                                                    |
+| none                                                                                         | `isDrc`, `isDrm`, `isOtf`, `client`, `captionTrack`, `xtags`, `qualityOrdinal`, `loudnessDb` |
+
+## Info
+
+`getInfo` returns a `VideoInfo` with eleven fields where 4.x returned about a hundred. Keys 4.x copied from YouTube's watch page (`iv_*`, `ad*`, `fmt_list`, `html5player`, `fexp`, `cver` and the rest) are gone, and so is `full`.
+
+| 4.x `videoInfo`            | v5 `VideoInfo`                                                               |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `videoDetails`             | `videoDetails`, reshaped below                                               |
+| `formats`                  | `formats`                                                                    |
+| `related_videos`           | `relatedVideos`, a list of `VideoSummary`                                    |
+| `player_response`          | `playerResponse`, typed `unknown`; narrow it before you read it              |
+| `player_response.captions` | `captionTracks`; see [Captions](../captions/)                                |
+| `html5player`              | gone                                                                         |
+| none                       | `client`, `hlsManifestUrl`, `sabr`, `visitorData`, `expiresAt`, `playableAt` |
+
+| 4.x `videoDetails`                                                                                                                         | v5 `videoDetails`                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `videoId`                                                                                                                                  | `id`                                                            |
+| `video_url`                                                                                                                                | `url`                                                           |
+| `shortDescription`, `description`                                                                                                          | `description`, `undefined` when empty                           |
+| `lengthSeconds`, `viewCount`                                                                                                               | numbers, not strings                                            |
+| `likes`                                                                                                                                    | `likes`, `undefined` instead of `null`                          |
+| `title`, `publishDate`                                                                                                                     | unchanged                                                       |
+| `published`                                                                                                                                | typed in 4.x but never filled; use `publishDate`                |
+| `uploadDate`, `category`, `keywords`, `isLive`                                                                                             | unchanged                                                       |
+| `age_restricted`                                                                                                                           | `isAgeRestricted`                                               |
+| `isLiveContent`                                                                                                                            | none; true for past broadcasts too, `isLive` is only while live |
+| `externalChannelId`                                                                                                                        | `author.id`                                                     |
+| `ownerGplusProfileUrl`                                                                                                                     | gone                                                            |
+| `isUnlisted`, `isFamilySafe`, `availableCountries`                                                                                         | unchanged, `undefined` when YouTube omits them                  |
+| `thumbnails`, `storyboards`                                                                                                                | unchanged; `Thumbnail` width and height are optional            |
+| `chapters`                                                                                                                                 | `chapters`, each `{ title, startTime }` instead of `start_time` |
+| `author`                                                                                                                                   | an `Author` object, below                                       |
+| `channelId`                                                                                                                                | `author.id`                                                     |
+| `ownerChannelName`                                                                                                                         | `author.name`                                                   |
+| `ownerProfileUrl`                                                                                                                          | `author.url`                                                    |
+| `liveBroadcastDetails`                                                                                                                     | none; use `isLive` and `isUpcoming`                             |
+| `media`                                                                                                                                    | gone                                                            |
+| `averageRating`, `allowRatings`, `isOwnerViewing`, `isCrawlable`, `isPrivate`, `isUnpluggedCorpus`, `hasYpcMetadata`, `embed`, `thumbnail` | gone                                                            |
+| none                                                                                                                                       | `isUpcoming`                                                    |
+
+| 4.x `Author`                   | v5 `Author`                                                |
+| ------------------------------ | ---------------------------------------------------------- |
+| `id`, `name`                   | unchanged                                                  |
+| `channel_url`                  | `https://www.youtube.com/channel/${author.id}`             |
+| `user_url`                     | `url`, the profile URL YouTube sends, else the channel URL |
+| `subscriber_count`             | `subscriberCount`                                          |
+| `verified`                     | `verified`, `undefined` when unknown                       |
+| `thumbnails`                   | `thumbnails`, always a list                                |
+| `avatar`                       | `thumbnails[0]?.url`                                       |
+| `user`, `external_channel_url` | gone                                                       |
+
+| 4.x `relatedVideo`                                             | v5 `VideoSummary`      |
+| -------------------------------------------------------------- | ---------------------- |
+| `id`, `title`, `isLive`, `thumbnails`                          | unchanged              |
+| `length_seconds`                                               | `lengthSeconds`        |
+| `view_count`, `short_view_count_text`                          | `viewCount`, a number  |
+| `author` (an `Author` or a string), `ucid`, `author_thumbnail` | `author: { id, name }` |
+| `published`, `video_thumbnail`, `richThumbnails`               | gone                   |
 
 ## Errors
 
