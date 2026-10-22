@@ -34,7 +34,7 @@ export function classifyPlayability(player: Json): Playability {
     extra: Partial<Pick<Playability & { ok: false }, "startTime" | "availableCountries">> = {},
   ) => ({ ok: false, code, reason, ...extra }) as const;
 
-  if (value === "LIVE_STREAM_OFFLINE") {
+  if (value === "LIVE_STREAM_OFFLINE" || lower.includes("live event will begin")) {
     const start = Number(
       at(
         status,
@@ -47,7 +47,12 @@ export function classifyPlayability(player: Json): Playability {
     );
     return fail("NOT_STARTED", Number.isFinite(start) && start > 0 ? { startTime: new Date(start * 1000) } : {});
   }
-  if (value === "AGE_CHECK_REQUIRED" || value === "AGE_VERIFICATION_REQUIRED" || lower.includes("confirm your age")) {
+  if (
+    value === "AGE_CHECK_REQUIRED" ||
+    value === "AGE_VERIFICATION_REQUIRED" ||
+    lower.includes("confirm your age") ||
+    lower.includes("age-restricted")
+  ) {
     return fail("AGE_RESTRICTED");
   }
   if (lower.includes("not a bot")) return fail("BOT_CHECK");

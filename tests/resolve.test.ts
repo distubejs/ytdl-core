@@ -510,12 +510,37 @@ describe("attempt attribution", () => {
         ],
       },
     },
+    "the TV client's upcoming live event has not started": {
+      clients: [Client.Tv],
+      player: () => unplayable("UNPLAYABLE", "This live event will begin in 3 hours"),
+      error: { code: "NOT_STARTED", attempts: [{ client: "tv", step: "playability", code: "NOT_STARTED" }] },
+    },
+    "the embedded player's age-restricted wording is an age gate": {
+      clients: [Client.WebEmbedded],
+      player: () => unplayable("UNPLAYABLE", "Sorry, this content is age-restricted"),
+      cookieHint: true,
+      error: { code: "AGE_RESTRICTED" },
+    },
     "the cookie hint follows a reason ending in a period": {
       clients: [Client.VisionOS],
       player: () => unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age."),
       cookieHint: true,
       error: {
         message: `Could not play ${ID}: Sign in to confirm your age. This video needs a signed-in, age-verified account: pass \`cookie\` to new Ytdl().`,
+      },
+    },
+    "a generic unavailable answer does not hide an upcoming live event": {
+      clients: [Client.Tv, Client.WebEmbedded],
+      player: ({ client }) =>
+        client === TV
+          ? unplayable("UNPLAYABLE", "This live event will begin in 3 hours")
+          : unplayable("ERROR", "This video is unavailable"),
+      error: {
+        code: "NOT_STARTED",
+        attempts: [
+          { client: "tv", code: "NOT_STARTED" },
+          { client: "web_embedded", code: "NOT_FOUND" },
+        ],
       },
     },
     "an unavailable answer outranks a player failure": {
