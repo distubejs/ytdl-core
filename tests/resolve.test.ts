@@ -1,5 +1,5 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
-import { BLOCK_PERIOD_MS, planClients } from "../src/resolve.ts";
+import { planClients } from "../src/resolve.ts";
 import { Client, DEFAULT_CLIENTS, Ytdl, YtdlError } from "../src/index.ts";
 import type { RetryEvent } from "../src/index.ts";
 import {
@@ -18,6 +18,8 @@ import {
 
 const ID = "aqz-KE-bpKQ";
 const PLAYER_ID = "aaaa0001";
+const NOW = 1_700_000_000_000;
+const MINUTE = 60 * 1000;
 
 const order = (cookie: boolean, poToken: boolean) =>
   planClients({ clients: DEFAULT_CLIENTS, cookie, poToken }, new Map(), 0).map(
@@ -108,21 +110,6 @@ describe("client order", () => {
       ["visionos", "AGE_RESTRICTED"],
       ["tv", "AGE_RESTRICTED"],
       ["mweb", "REQUEST_FAILED"],
-    ]);
-  });
-
-  test("blocked clients move to the end until the block period passes", () => {
-    const config = { clients: DEFAULT_CLIENTS, cookie: false, poToken: false } as const;
-    const blocked = new Map([["visionos", 1_000]] as const);
-    expect(planClients(config, blocked, 1_000 + BLOCK_PERIOD_MS - 1).map((rung) => rung.client)).toEqual([
-      "web_embedded",
-      "tv",
-      "visionos",
-    ]);
-    expect(planClients(config, blocked, 1_000 + BLOCK_PERIOD_MS).map((rung) => rung.client)).toEqual([
-      "visionos",
-      "web_embedded",
-      "tv",
     ]);
   });
 
@@ -245,13 +232,17 @@ describe("resume", () => {
     expect(yt.clients()).toEqual([VISIONOS, VISIONOS]);
   });
 
-  test("a client still walled after a new visitor is blocked, and the next client finishes the bytes", async () => {
+  test("a client still walled after a new visitor goes last for ten minutes, and the next client finishes the bytes", async () => {
+    setSystemTime(new Date(NOW));
     const content = Uint8Array.from({ length: 4000 }, (_, index) => (index * 7) % 256);
+    let tvDown = false;
     const yt = fakeYouTube({
       player: ({ client }) =>
         client === VISIONOS
           ? playable(ID, [audioFormat(251, { url: `${MEDIA_HOST}?itag=251&expire=4102444800&c=visionos` })])
-          : ciphered(ID),
+          : tvDown
+            ? unplayable("UNPLAYABLE", "")
+            : ciphered(ID),
       media: (url) => {
         const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
         if (url.searchParams.get("c") === "visionos" && start >= 1000) return new Response("", { status: 403 });
@@ -260,18 +251,28 @@ describe("resume", () => {
     });
     const ytdl = new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: [Client.VisionOS, Client.Tv] });
     const retries: RetryEvent[] = [];
-    const stream = ytdl.download(ID, { chunkSize: 1000, onRetry: (event) => retries.push(event) });
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of stream) chunks.push(chunk as Uint8Array);
+    const asked = async (at: number) => {
+      setSystemTime(new Date(at));
+      const before = yt.clients().length;
+      await ytdl.getInfo(ID);
+      return yt.clients().slice(before);
+    };
+    try {
+      const stream = ytdl.download(ID, { chunkSize: 1000, onRetry: (event) => retries.push(event) });
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream) chunks.push(chunk as Uint8Array);
 
-    expect(Buffer.concat(chunks)).toEqual(Buffer.from(content));
-    expect(retries.map(({ attempt, client }) => [attempt, client])).toEqual([
-      [1, "visionos"],
-      [2, "visionos"],
-    ]);
-    const before = yt.clients().length;
-    expect((await ytdl.getInfo(ID)).client).toBe("tv");
-    expect(yt.clients().slice(before)).toEqual([TV]);
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from(content));
+      expect(retries.map(({ attempt, client }) => [attempt, client])).toEqual([
+        [1, "visionos"],
+        [2, "visionos"],
+      ]);
+      tvDown = true;
+      expect(await asked(NOW + 10 * MINUTE - 1)).toEqual([TV, VISIONOS]);
+      expect(await asked(NOW + 10 * MINUTE)).toEqual([VISIONOS]);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("onRetry destroying the stream leaves no unhandled rejection and starts no request", async () => {
@@ -413,6 +414,17 @@ describe("outcomes", () => {
     const error = await rejection(new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID }).getInfo(ID));
     expect(error.code).toBe("REGION_BLOCKED");
     expect(error.availableCountries).toEqual(["DE", "FR"]);
+  });
+
+  test("a format URL without an expiry stays fresh for five hours", async () => {
+    setSystemTime(new Date(NOW));
+    try {
+      const yt = fakeYouTube({ player: () => playable(ID, [audioFormat(251, { url: `${MEDIA_HOST}?itag=251` })]) });
+      const info = await new Ytdl({ fetch: yt.fetch }).getInfo(ID);
+      expect(info.expiresAt).toBe(NOW + 5 * 60 * MINUTE);
+    } finally {
+      setSystemTime();
+    }
   });
 });
 

@@ -571,6 +571,88 @@ describe("ranged delivery", () => {
     expect(errors).toEqual([]);
     expect(server.requests).toHaveLength(1);
   });
+
+  test("a 403 on the last window resumes it and the progress ends at the file's total", async () => {
+    const server = mediaServer(SOURCE, ({ generation, start }) =>
+      generation === 1 && start === 5000 ? forbidden() : undefined,
+    );
+    const { input, progress } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+
+    const { data, errors } = await collectNode(nodeStream(input));
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(server.requests.slice(-2).map(({ generation, start, end }) => [generation, start, end])).toEqual([
+      [1, 5000, 5499],
+      [2, 5000, 5499],
+    ]);
+    expect(progress.at(-1)).toEqual({ chunkBytes: 500, downloaded: 5500, total: 5500 });
+  });
+
+  test("a last window of one byte is requested and emitted", async () => {
+    const server = mediaServer(SOURCE);
+    const { input } = setup({ fetch: server.fetch, options: { range: { start: 0, end: 3000 }, chunkSize: 1000 } });
+
+    const { data } = await collectNode(nodeStream(input));
+
+    expect(data).toEqual(SOURCE.slice(0, 3001));
+    expect(server.requests.map(({ start, end }) => [start, end])).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+      [3000, 3000],
+    ]);
+  });
+
+  test("a window whose last byte arrives in its own body chunk takes no extra request", async () => {
+    const server = mediaServer(SOURCE, ({ start, end }) => {
+      const window = SOURCE.slice(start, end + 1);
+      return new Response(
+        new ReadableStream({
+          start: (controller) => {
+            controller.enqueue(window.subarray(0, -1));
+            controller.enqueue(window.subarray(-1));
+            controller.close();
+          },
+        }),
+      );
+    });
+    const { input } = setup({ fetch: server.fetch, options: { chunkSize: 1000 } });
+
+    const { data } = await collectNode(nodeStream(input));
+
+    expect(data).toEqual(SOURCE);
+    expect(server.requests.map((request) => request.start)).toEqual([0, 1000, 2000, 3000, 4000, 5000]);
+  });
+
+  test("a server answering past the window yields only the window and cancels the rest of the body", async () => {
+    let cancelled = false;
+    const server = mediaServer(SOURCE, ({ start }) => {
+      const pieces = [SOURCE.slice(start), SOURCE.slice(0, 100)];
+      return new Response(
+        new ReadableStream(
+          {
+            pull: (controller) => {
+              const piece = pieces.shift();
+              if (piece) controller.enqueue(piece);
+              else controller.close();
+            },
+            cancel: () => {
+              cancelled = true;
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+      );
+    });
+    const { input } = setup({ fetch: server.fetch, options: { range: { start: 1000, end: 1999 } } });
+
+    const { data } = await collectNode(nodeStream(input));
+
+    expect(data).toEqual(SOURCE.slice(1000, 2000));
+    expect(cancelled).toBe(true);
+    expect(server.requests).toHaveLength(1);
+  });
 });
 
 describe("live delivery", () => {

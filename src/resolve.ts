@@ -16,7 +16,7 @@ import { classifyPlayability, prerollEnd } from "./playability.ts";
 import type { GetPoToken } from "./po-token/index.ts";
 import { loadPlayer, type PreparedPlayer, type SignedUrl } from "./solver/index.ts";
 
-export const BLOCK_PERIOD_MS = 10 * 60 * 1000;
+const BLOCK_PERIOD_MS = 10 * 60 * 1000;
 
 interface Rung {
   readonly client: Client;

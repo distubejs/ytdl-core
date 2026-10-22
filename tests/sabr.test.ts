@@ -70,6 +70,22 @@ const tenSecondSegments = (count: number): SabrFormatSpec => ({
   durationMs: count * 10_000,
 });
 
+async function rangeInFirstSegment(laterPost: (init: RequestInit | undefined) => Promise<Response>) {
+  const track = tenSecondSegments(20);
+  const yt = fakeYouTube({ player: () => sabrPlayable(ID, [track]) });
+  const served = sabrServer({ formats: [track] }).fetch(yt.fetch);
+  let posts = 0;
+  const spy = ((input: string | URL | Request, init?: RequestInit) => {
+    if (new URL(input instanceof Request ? input.url : input).searchParams.has("sabr") && ++posts > 1) {
+      return laterPost(init);
+    }
+    return served(input, init);
+  }) as typeof globalThis.fetch;
+  const ytdl = new Ytdl({ fetch: spy, playerId: PLAYER_ID });
+  const { body } = await download(ytdl, { quality: 251, range: { start: 0, end: 1_500 } });
+  expect(body).toEqual(Buffer.from(track.bytes.subarray(0, 1_501)));
+}
+
 describe("SABR delivery", () => {
   test("SABR-only formats are listed without a URL", async () => {
     const info = await setup().ytdl.getInfo(ID);
@@ -166,6 +182,19 @@ describe("SABR delivery", () => {
 
     expect(body).toEqual(Buffer.from(AUDIO.bytes.subarray(12_345, 33_334)));
     expect(progress.at(-1)?.total).toBe(33_333 - 12_345 + 1);
+  });
+
+  test("a range ending on a segment's first byte yields that byte", async () => {
+    const { body } = await download(setup().ytdl, { quality: 251, range: { start: 0, end: 20_000 } });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes.subarray(0, 20_001)));
+  });
+
+  test("a range starting mid-segment that fails partway skips the bytes it already emitted", async () => {
+    const { body, retries } = await download(setup({ failFrom: 2 }).ytdl, { quality: 251, range: { start: 12_345 } });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes.subarray(12_345)));
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
   });
 
   test("a session that fails partway resumes and still yields the exact bytes", async () => {
@@ -298,6 +327,24 @@ describe("SABR delivery", () => {
     expect(body).toEqual(Buffer.from(AUDIO.bytes.subarray(0, body.length)));
   });
 
+  test("a range that ends in the first media segment stops its SABR session", async () => {
+    const stopped = Promise.withResolvers<void>();
+    await rangeInFirstSegment(
+      (init) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              stopped.resolve();
+              reject(init.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    await stopped.promise;
+  });
+
   test("destroying the stream stops a session that waits on the server", async () => {
     const { sabr, ytdl } = setup({ requireAttestation: true });
     const stream = ytdl.download(ID, { quality: 251 });
@@ -365,15 +412,22 @@ describe("SABR delivery", () => {
     expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "SABR session failed" }]);
   });
 
-  test("a time-started session that rewinds to time 0 yields the bytes of one served from the segment holding the time", async () => {
-    const track = tenSecondSegments(6);
-    const { sabr, ytdl } = setup({ formats: [track], initOnlyOnLateStart: true });
-    const { body, retries } = await download(ytdl, { quality: 251, startTimeMs: 45_000 });
+  test.each([
+    [45_000, 5_000],
+    [40_000, 5_000],
+    [5_000, 1_000],
+  ])(
+    "a session started at %d ms that rewinds to time 0 yields the init segment, then the bytes from %d",
+    async (startTimeMs, firstByte) => {
+      const track = tenSecondSegments(6);
+      const { sabr, ytdl } = setup({ formats: [track], initOnlyOnLateStart: true });
+      const { body, retries } = await download(ytdl, { quality: 251, startTimeMs });
 
-    expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(5_000, 7_000)]));
-    expect(retries).toEqual([]);
-    expect(sabr.requests.map((request) => request.playerTimeMs)).toContain(0);
-  });
+      expect(body).toEqual(Buffer.concat([track.bytes.subarray(0, 1_000), track.bytes.subarray(firstByte)]));
+      expect(retries).toEqual([]);
+      expect(sabr.requests.map((request) => request.playerTimeMs)).toContain(0);
+    },
+  );
 
   test.each([
     ["a negative start time", { startTimeMs: -1 }],
