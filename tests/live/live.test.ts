@@ -27,7 +27,7 @@ const VIDEOS = {
   long: "KG6SL6Mf7ak", // NASA ISS views, 2 h 39 min
   short: "yuT7iQC-yro", // NASA
   kids: "wZK2xTNzgq8", // NASA Space Place, made for kids: VISIONOS lists no formats
-  live: "https://www.youtube.com/@NASA/live",
+  live: "https://www.youtube.com/@LofiGirl/live", // 24/7 lofi hip hop radio
 } as const;
 const SEARCH_QUERY = "blender open movie";
 const PLAYLIST = "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"; // NASA, Perseverance Mars Rover, over 100 entries
