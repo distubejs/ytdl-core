@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CaptionFormat, Ytdl, YtdlError } from "../src/index.ts";
-import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
+import { audioFormat, fakeYouTube, fixture, MEDIA_HOST, playable } from "./fake-youtube.ts";
 
 // Recorded 2026-10-20 from the VISIONOS player response for yuT7iQC-yro (NASA, public domain): `captions` kept as
 // served, signatures, `ei` and `expire` replaced by placeholders, and a minimal playable body added.
@@ -221,6 +221,39 @@ describe("getCaptions info reuse", () => {
     const signature = new URL(requested[0]?.url ?? "").searchParams.get("signature");
     expect(signature).toStartWith("SIG-");
     expect(signature).not.toBe(staleSignature);
+  });
+
+  test("a Media info refreshed by a resumed read requests the fresh track URL", async () => {
+    let lookups = 0;
+    const yt = fakeYouTube({
+      player: ({ client }) => {
+        const generation = client === "WEB" ? lookups : ++lookups;
+        return {
+          ...synthetic([{ lang: "en" }], `SIG-${generation}`),
+          streamingData: {
+            adaptiveFormats: [audioFormat(251, { url: `${MEDIA_HOST}?itag=251&expire=4102444800&gen=${generation}` })],
+          },
+        };
+      },
+      media: (url) => {
+        if (url.pathname === "/api/timedtext") return new Response(VTT);
+        if (url.searchParams.get("gen") === "1") return new Response(null, { status: 403 });
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        return new Response(new Uint8Array(end - start + 1));
+      },
+    });
+    const ytdl = new Ytdl({ fetch: yt.fetch });
+    const info = await ytdl.getInfo(ID);
+    const media = ytdl.open(info, info.formats[0]!);
+    for await (const _ of media.read()) {
+    }
+    const playerCalls = yt.playerCalls.length;
+
+    await ytdl.getCaptions(media.info);
+
+    const requested = yt.requests.filter((request) => request.url.includes("/api/timedtext"));
+    expect(requested.map((request) => new URL(request.url).searchParams.get("signature"))).toEqual(["SIG-2"]);
+    expect(yt.playerCalls.length).toBe(playerCalls);
   });
 });
 

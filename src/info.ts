@@ -327,6 +327,6 @@ export async function resumeInfo(innertube: InnerTube, resolver: Resolver, reque
     (candidate) => sameFormat(candidate, failed) && candidate.contentLength === failed.contentLength,
   );
   if (!format) throw new YtdlError("NO_FORMAT", `No client offers the same itag ${failed.itag} file after ${reason}`);
-  const base = { ...previous, playerResponse: resolution.player };
+  const base = { ...previous, playerResponse: resolution.player, captionTracks: captionTracks(resolution.player) };
   return { info: toInfo(base, resolution, formats), format };
 }
