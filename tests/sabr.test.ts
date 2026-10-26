@@ -17,6 +17,7 @@ const VIDEO: SabrFormatSpec = {
   segments: 5,
 };
 const FORMATS = [AUDIO, SMALL_AUDIO, VIDEO];
+const stubPoToken = async () => "dG9rZW4";
 
 interface Setup extends Omit<SabrServerOptions, "formats" | "failOn"> {
   readonly formats?: readonly SabrFormatSpec[];
@@ -419,6 +420,19 @@ describe("SABR delivery", () => {
 
     expect(error).toMatchObject({ code: "REQUEST_FAILED", cause: minter });
     expect(retries).toEqual([]);
+  });
+
+  test("a mint that recovers lets a later failed session resume", async () => {
+    let mints = 0;
+    const { ytdl } = setup({
+      requireAttestation: true,
+      failFrom: 3,
+      getPoToken: () => (++mints === 1 ? Promise.reject(new Error("minter hiccup")) : stubPoToken()),
+    });
+    const { body, retries } = await download(ytdl, { quality: 251 });
+
+    expect(body).toEqual(Buffer.from(AUDIO.bytes));
+    expect(retries.map((retry) => retry.attempt)).toEqual([1]);
   });
 
   test("a start time streams the init segment, then from the segment containing it to the end without a retry", async () => {

@@ -115,10 +115,16 @@ export async function* readSabr(
       callbacks: mint && {
         // googlevideo logs a failed mint and carries on without a token.
         onMintPoToken: () =>
-          mint(info, signal).then(tokenBytes, (error: unknown) => {
-            mintFailure ??= error;
-            throw error;
-          }),
+          mint(info, signal).then(
+            (token) => {
+              mintFailure = undefined;
+              return tokenBytes(token);
+            },
+            (error: unknown) => {
+              mintFailure = error;
+              throw error;
+            },
+          ),
       },
     });
     let wantedTrack: SabrTrack | undefined;
@@ -219,7 +225,7 @@ export async function* readSabr(
       reader.cancel().catch(ignore);
     }
     if (mintFailure !== undefined) {
-      throw new YtdlError("REQUEST_FAILED", `itag ${format.itag}: getPoToken failed`, { cause: mintFailure });
+      throw new YtdlError("REQUEST_FAILED", `itag ${format.itag}: PO token minting failed`, { cause: mintFailure });
     }
     const reason = redact(failure instanceof Error ? failure.message : String(failure));
     const failed = new YtdlError("REQUEST_FAILED", `itag ${format.itag}: SABR session failed: ${reason}`, {
