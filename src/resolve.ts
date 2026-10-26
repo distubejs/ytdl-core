@@ -113,10 +113,21 @@ const RANK: Readonly<Record<YtdlErrorCode, number>> = {
   NO_CAPTIONS: 14,
 };
 
-function mostSpecific(attempts: readonly Attempt[]): Attempt | undefined {
+const credentialFailure = (attempt: Attempt) =>
+  attempt.step === "po-token" || (attempt.signedIn && attempt.code === "AUTH_FAILED");
+const anonymousUnplayable = (attempt: Attempt) =>
+  !attempt.signedIn && attempt.step === "playability" && attempt.code === "NO_FORMAT";
+
+function highest(attempts: readonly Attempt[]): Attempt | undefined {
   const rank = Math.min(...attempts.map((attempt) => RANK[attempt.code]));
   const tied = attempts.filter((attempt) => RANK[attempt.code] === rank);
   return tied.find((attempt) => attempt.availableCountries || attempt.startTime) ?? tied[0];
+}
+
+function mostSpecific(attempts: readonly Attempt[]): Attempt | undefined {
+  const verdicts = attempts.filter((attempt) => !credentialFailure(attempt));
+  const verdict = highest(verdicts);
+  return verdict?.code === "NO_FORMAT" && verdicts.some(anonymousUnplayable) ? verdict : highest(attempts);
 }
 
 function failure(

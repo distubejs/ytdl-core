@@ -643,6 +643,47 @@ describe("attempt attribution", () => {
         attempts: [{ client: "visionos", step: "solve", code: "PLAYER_SOLVE_FAILED" }],
       },
     },
+    "a dead cookie does not hide the video's own answer": {
+      options: { cookie: ACCOUNT },
+      routes: SIGNED_OUT_HOME,
+      player: () => unplayable("UNPLAYABLE", ""),
+      error: {
+        code: "NO_FORMAT",
+        message: `Could not play ${ID}: status UNPLAYABLE`,
+        attempts: deadCookieAttempts("NO_FORMAT"),
+      },
+    },
+    "a dead cookie still outranks a bot check next to an unplayable answer": {
+      options: { cookie: ACCOUNT },
+      routes: SIGNED_OUT_HOME,
+      player: ({ client }) =>
+        client === VISIONOS
+          ? unplayable("UNPLAYABLE", "")
+          : unplayable("LOGIN_REQUIRED", "Sign in to confirm you're not a bot"),
+      error: {
+        code: "AUTH_FAILED",
+        attempts: [
+          { client: "visionos", signedIn: false, code: "NO_FORMAT" },
+          { client: "web_embedded", signedIn: false, code: "BOT_CHECK" },
+          { client: "web_embedded", signedIn: true, code: "AUTH_FAILED" },
+          { client: "tv", signedIn: false, code: "BOT_CHECK" },
+          { client: "tv", signedIn: true, code: "AUTH_FAILED" },
+        ],
+      },
+    },
+    "a failed PO token does not hide the video's own answer": {
+      clients: [Client.VisionOS, Client.Mweb],
+      options: { getPoToken: () => Promise.reject(new Error("minter down")) },
+      player: () => unplayable("UNPLAYABLE", ""),
+      error: {
+        code: "NO_FORMAT",
+        message: `Could not play ${ID}: status UNPLAYABLE`,
+        attempts: [
+          { client: "visionos", step: "playability", code: "NO_FORMAT" },
+          { client: "mweb", step: "po-token", code: "REQUEST_FAILED" },
+        ],
+      },
+    },
     "an ended stream without a recording is not found, even with a dead cookie": {
       options: { cookie: ACCOUNT },
       routes: SIGNED_OUT_HOME,
