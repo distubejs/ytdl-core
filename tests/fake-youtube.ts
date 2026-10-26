@@ -26,6 +26,10 @@ export interface FakeOptions {
 
 export const REQUEST_BUDGET = 2000;
 
+export function visitorBody(visitor: string): string {
+  return `)]}'\n${JSON.stringify([[null, null, [[[...Array.from({ length: 13 }, () => null), visitor]]]]])}`;
+}
+
 export function fakeYouTube(options: FakeOptions) {
   const requests: { readonly url: string; readonly init: RequestInit | undefined }[] = [];
   const playerCalls: PlayerCall[] = [];
@@ -39,14 +43,7 @@ export function fakeYouTube(options: FakeOptions) {
     if (route) return route();
     if (url === "https://www.youtube.com/sw.js_data") {
       visitors++;
-      const data = [
-        [
-          null,
-          null,
-          [[[null, null, null, null, null, null, null, null, null, null, null, null, null, `VISITOR-${visitors}`]]],
-        ],
-      ];
-      return new Response(`)]}'\n${JSON.stringify(data)}`);
+      return new Response(visitorBody(`VISITOR-${visitors}`));
     }
     if (url === "https://www.youtube.com/iframe_api") {
       return new Response("var scriptUrl = 'https:\\/\\/www.youtube.com\\/s\\/player\\/fa4e0001\\/www-widgetapi.js';");

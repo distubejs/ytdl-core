@@ -61,21 +61,24 @@ export class InnerTube {
   }
 
   visitorData(signal: AbortSignal | undefined): Promise<string> {
-    if (!this.#visitor) {
-      const pending = this.#fetchVisitorData();
-      this.#visitor = pending;
-      pending.catch(() => {
-        if (this.#visitor === pending) this.#visitor = undefined;
-      });
-    }
-    return abortable(this.#visitor, signal);
+    return abortable(this.#sharedVisitor(), signal);
   }
 
-  replaceVisitorData(stale: string | undefined, signal: AbortSignal | undefined): Promise<string> {
+  replaceVisitorData(
+    stale: string | undefined,
+    signal: AbortSignal | undefined,
+    { keepOnFailure = false } = {},
+  ): Promise<string> {
     const current = this.#visitor;
     const fresh = () => {
       this.#visitor = undefined;
-      return this.visitorData(signal);
+      const pending = this.#sharedVisitor();
+      if (keepOnFailure && current) {
+        pending.catch(() => {
+          this.#visitor ??= current;
+        });
+      }
+      return abortable(pending, signal);
     };
     if (!current || stale === undefined) return fresh();
     const settle = (value: string | undefined) =>
@@ -86,6 +89,17 @@ export class InnerTube {
       current.then(settle, () => settle(undefined)),
       signal,
     );
+  }
+
+  #sharedVisitor(): Promise<string> {
+    if (!this.#visitor) {
+      const pending = this.#fetchVisitorData();
+      this.#visitor = pending;
+      pending.catch(() => {
+        if (this.#visitor === pending) this.#visitor = undefined;
+      });
+    }
+    return this.#visitor;
   }
 
   async embedContext(videoId: string, signal: AbortSignal | undefined): Promise<EmbedContext> {

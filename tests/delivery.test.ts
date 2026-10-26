@@ -15,6 +15,7 @@ import {
   REQUEST_BUDGET,
   TV,
   VISIONOS,
+  visitorBody,
   WEB_EMBEDDED,
 } from "./fake-youtube.ts";
 
@@ -703,6 +704,44 @@ describe("resume through the resolver", () => {
       { attempt: 2, client: "visionos", reason: "HTTP 403" },
     ]);
     expect([...new Set(served)]).toEqual([VISIONOS, WEB_EMBEDDED]);
+  });
+
+  test("a failed visitor-data refresh resumes with the previous visitor data", async () => {
+    const visitorAnswers = [
+      () => new Response(visitorBody("VISITOR-A")),
+      () => new Response(null, { status: 500 }),
+      () => new Response(visitorBody("VISITOR-B")),
+    ];
+    let visitorFetches = 0;
+    let lookups = 0;
+    const yt = fakeYouTube({
+      routes: { "https://www.youtube.com/sw.js_data": () => visitorAnswers[visitorFetches++]!() },
+      player: ({ client }) =>
+        playable(VIDEO_ID, [
+          audioFormat(251, {
+            url: `${MEDIA_HOST}?itag=251&expire=4102444800&gen=${client === "WEB" ? lookups : ++lookups}`,
+            contentLength: String(SOURCE.length),
+          }),
+        ]),
+      media: (url) => {
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        if (url.searchParams.get("gen") === "1" && start >= 1000) return forbidden();
+        return new Response(SOURCE.slice(start, end + 1));
+      },
+    });
+    const retries: RetryEvent[] = [];
+    const ytdl = new Ytdl({ fetch: yt.fetch, clients: [Client.VisionOS] });
+
+    const { data, errors } = await collectNode(
+      ytdl.download(VIDEO_ID, { chunkSize: 1000, onRetry: (event) => retries.push(event) }),
+    );
+
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect(retries).toEqual([{ attempt: 1, client: "visionos", reason: "HTTP 403" }]);
+    expect(visitorFetches).toBe(2);
+    const visionCalls = yt.playerCalls.filter((call) => call.client === VISIONOS);
+    expect(visionCalls.map((call) => call.headers.get("X-Goog-Visitor-Id"))).toEqual(["VISITOR-A", "VISITOR-A"]);
   });
 });
 

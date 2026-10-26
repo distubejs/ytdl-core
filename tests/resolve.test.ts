@@ -15,6 +15,7 @@ import {
   TV,
   unplayable,
   VISIONOS,
+  visitorBody,
   WEB_EMBEDDED,
 } from "./fake-youtube.ts";
 
@@ -166,6 +167,26 @@ describe("visitor data", () => {
     expect(info.client).toBe("visionos");
     expect(yt.clients()).toEqual([VISIONOS, VISIONOS]);
     expect(yt.visitorFetches()).toBe(2);
+  });
+
+  test("after a failed bot-check replacement the next client fetches fresh visitor data", async () => {
+    const answers = [
+      () => new Response(visitorBody("VISITOR-A")),
+      () => new Response(null, { status: 500 }),
+      () => new Response(visitorBody("VISITOR-B")),
+    ];
+    let fetches = 0;
+    const yt = fakeYouTube({
+      routes: { "https://www.youtube.com/sw.js_data": () => answers[fetches++]!() },
+      player: ({ client }) =>
+        client === VISIONOS ? unplayable("LOGIN_REQUIRED", "Sign in to confirm you're not a bot") : playable(ID),
+    });
+    const info = await new Ytdl({ fetch: yt.fetch, clients: [Client.VisionOS, Client.Tv] }).getInfo(ID);
+    expect(info.client).toBe("tv");
+    const visitorOf = (client: string) =>
+      yt.playerCalls.filter((call) => call.client === client).map((call) => call.headers.get("X-Goog-Visitor-Id"));
+    expect(visitorOf(VISIONOS)).toEqual(["VISITOR-A"]);
+    expect(visitorOf(TV)).toEqual(["VISITOR-B"]);
   });
 });
 

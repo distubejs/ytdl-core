@@ -1,6 +1,7 @@
 import { relatedVideos } from "./discovery.ts";
 import { userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
+import { ignore } from "./http.ts";
 import { parseHlsMaster, sameFormat } from "./formats.ts";
 import {
   at,
@@ -311,7 +312,8 @@ export async function lookupInfo(
 export async function resumeInfo(innertube: InnerTube, resolver: Resolver, request: ResumeRequest): Promise<Playback> {
   const { info: previous, format: failed, attempt, reason, signal } = request;
   if (attempt <= 1) {
-    if (previous.visitorData) await innertube.replaceVisitorData(previous.visitorData, signal);
+    if (previous.visitorData)
+      await innertube.replaceVisitorData(previous.visitorData, signal, { keepOnFailure: true }).catch(ignore);
   } else if (reason === "HTTP 403") {
     resolver.block(failed.client);
   }
