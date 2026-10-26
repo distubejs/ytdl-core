@@ -151,6 +151,13 @@ describe("chooseFormat", () => {
     const unknown = most(formats, (format) => format.itag) + 1;
     expect(errorCode({ quality: unknown })).toBe("NO_FORMAT");
   });
+
+  test.each<[string, unknown]>([
+    ["an unknown name", "best"],
+    ["a bigint", 1n],
+  ])("a quality that is %s throws INVALID_ARGUMENT", (_, quality) => {
+    expect(errorCode({ quality: quality as Quality })).toBe("INVALID_ARGUMENT");
+  });
 });
 
 describe("unplayable formats", () => {
@@ -291,6 +298,7 @@ describe("filters", () => {
     ["a criterion of the wrong type", { hasVideo: "no" }],
     ["a 4.x filter string", "audioonly"],
     ["an empty list", []],
+    ["a bigint", 1n],
   ])("%s throws INVALID_ARGUMENT", (_, filter) => {
     expect(errorCode({ filter: filter as FormatCriteria })).toBe("INVALID_ARGUMENT");
   });

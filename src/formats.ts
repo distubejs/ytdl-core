@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import type { Client } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { at, isRecord, type Json, num, str } from "./json.ts";
@@ -400,7 +401,7 @@ function matcher(filter: unknown): Matcher {
   if (!isRecord(filter)) {
     throw new YtdlError(
       "INVALID_ARGUMENT",
-      `Unknown filter ${JSON.stringify(filter)}; pass criteria such as { hasAudio: true, hasVideo: false } or a predicate`,
+      `Unknown filter ${inspect(filter)}; pass criteria such as { hasAudio: true, hasVideo: false } or a predicate`,
     );
   }
   const criteria = filter;
@@ -490,11 +491,12 @@ const PREFERENCE: readonly ((format: VideoFormat) => boolean)[] = [
  * is picked only when no original matches, and a dubbed audio track only when no original-language track does.
  */
 export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
+  const quality = options.quality ?? Quality.Highest;
+  if (!isQuality(quality)) throw new YtdlError("INVALID_ARGUMENT", `Unknown quality ${inspect(quality)}`);
   const wanted = options.format;
   if (wanted) checkPlayable(wanted);
   if (wanted) return formats.find((format) => sameFormat(format, wanted)) ?? wanted;
   const playable = formats.filter(isPlayable);
-  const quality = options.quality ?? "highest";
   for (const matches of matchers(options.filter)) {
     const matching = playable.filter(matches);
     for (const preferred of PREFERENCE) {
@@ -503,6 +505,14 @@ export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFor
     }
   }
   throw new YtdlError("NO_FORMAT", `No format matches quality ${JSON.stringify(quality)}`);
+}
+
+const QUALITIES: readonly unknown[] = Object.values(Quality);
+
+const isItag = (value: unknown) => typeof value === "number";
+
+function isQuality(value: unknown): value is Quality {
+  return QUALITIES.includes(value) || isItag(value) || (Array.isArray(value) && value.every(isItag));
 }
 
 function lowest(sorted: readonly VideoFormat[], bitrate: (format: VideoFormat) => number | undefined) {
