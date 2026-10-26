@@ -12,7 +12,10 @@ export const YtdlErrorCode = {
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
   /** Called on something that can't work, such as a disposed PO token provider. */
   INVALID_STATE: "INVALID_STATE",
-  /** The video does not exist or was removed, or a channel live URL names no channel or no live stream. */
+  /**
+   * The video does not exist or was removed, an ended live stream kept no recording, or a channel live URL names no
+   * channel or no live stream.
+   */
   NOT_FOUND: "NOT_FOUND",
   /** The video is private. */
   PRIVATE: "PRIVATE",

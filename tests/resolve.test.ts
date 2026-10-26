@@ -443,6 +443,15 @@ const playerScript = (id: string) => `https://www.youtube.com/s/player/${id}/pla
 const REGION_REASON = "The uploader has not made this video available in your country";
 const ACCOUNT = "SID=account-sid-value; SAPISID=sapisid-value-aaaa";
 const SIGNED_IN_HOME = { "https://www.youtube.com/": () => new Response('ytcfg.set({"LOGGED_IN":true});') };
+const SIGNED_OUT_HOME = { "https://www.youtube.com/": () => new Response('ytcfg.set({"LOGGED_IN":false});') };
+const RECORDING_REASON = "This live stream recording is not available.";
+const deadCookieAttempts = (anonymous: string) => [
+  { client: "visionos", signedIn: false, step: "playability", code: anonymous },
+  { client: "web_embedded", signedIn: false, step: "playability", code: anonymous },
+  { client: "web_embedded", signedIn: true, step: "visitor", code: "AUTH_FAILED" },
+  { client: "tv", signedIn: false, step: "playability", code: anonymous },
+  { client: "tv", signedIn: true, step: "visitor", code: "AUTH_FAILED" },
+];
 const countries = (list: readonly string[]) => ({
   microformat: { playerMicroformatRenderer: { availableCountries: list } },
 });
@@ -632,6 +641,16 @@ describe("attempt attribution", () => {
       error: {
         code: "PLAYER_SOLVE_FAILED",
         attempts: [{ client: "visionos", step: "solve", code: "PLAYER_SOLVE_FAILED" }],
+      },
+    },
+    "an ended stream without a recording is not found, even with a dead cookie": {
+      options: { cookie: ACCOUNT },
+      routes: SIGNED_OUT_HOME,
+      player: () => unplayable("UNPLAYABLE", RECORDING_REASON),
+      error: {
+        code: "NOT_FOUND",
+        message: `Could not play ${ID}: ${RECORDING_REASON}`,
+        attempts: deadCookieAttempts("NOT_FOUND"),
       },
     },
     "countries on a later attempt win the tie and need no metadata": {

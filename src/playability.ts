@@ -68,6 +68,7 @@ export function classifyPlayability(player: Json): Playability {
     return fail("REGION_BLOCKED", countries ? { availableCountries: countries } : {});
   }
   if (lower.includes("try again later") || lower.includes("too many requests")) return fail("RATE_LIMITED");
+  if (lower.includes("recording is not available")) return fail("NOT_FOUND");
   if (value === "LOGIN_REQUIRED") return fail("BOT_CHECK");
   if (
     value === "ERROR" &&

@@ -69,6 +69,8 @@ The error's `code` is the attempt code that ranks first, and its own `cause` is 
 2. `PLAYER_SOLVE_FAILED`, `INVALID_STATE`. These are library failures you can fix by updating or by reading the `cause`.
 3. `AGE_RESTRICTED`, `AUTH_FAILED`, `RATE_LIMITED`, `BOT_CHECK`, `REQUEST_FAILED`, `NO_FORMAT`.
 
+A live stream that ended without a recording reports `NOT_FOUND`.
+
 The ranks sit in `RANK` in `src/resolve.ts`. `INVALID_URL`, `INVALID_ARGUMENT` and `NO_CAPTIONS` come last because no rung reports them. Among attempts with the winning code, the first one that carries `availableCountries` or `startTime` supplies them. The losing attempts stay in `attempts` with their own code, so an `AGE_RESTRICTED` rung is still listed when a broken player wins.
 
 An `AGE_RESTRICTED` error from an instance without a cookie says once that you need to pass `cookie`. A `REGION_BLOCKED` error with no allowed countries from any client asks YouTube's web metadata once to fill `availableCountries`.
