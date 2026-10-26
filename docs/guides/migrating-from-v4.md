@@ -31,7 +31,7 @@ The package is ESM-only and has no default export. `import ytdl from "@distube/y
 | `ytdl.filterFormats(formats, "audioonly")` | `formats.filter((format) => format.hasAudio && !format.hasVideo)`    |
 | `ytdl.getVideoID(input)`, `getURLVideoID`  | `parseVideoId(input)`, which returns `undefined` instead of throwing |
 | `ytdl.validateID(id)`, `validateURL(url)`  | `parseVideoId(input) !== undefined`                                  |
-| `ytdl.createAgent(cookies)`                | `new Ytdl({ cookie })` with the [cookie export](../cookies/) as text |
+| `ytdl.createAgent(cookies)`                | `new Ytdl({ cookie })` with the [cookie](../cookies/) header string  |
 | `ytdl.createProxyAgent({ uri }, cookies)`  | `new Ytdl({ fetch, cookie })` with a [proxied fetch](../proxies/)    |
 
 `ytdl.cache` and `ytdl.version` are gone. Every other 4.15.1 export is in the table. v5 exports `Ytdl`, `chooseFormat`, `parseVideoId`, `parsePlaylistId`, `Quality`, `Client`, `DEFAULT_CLIENTS`, `CaptionFormat`, `createPoTokenProvider`, `YtdlError` and `YtdlErrorCode`.
