@@ -1,6 +1,6 @@
 # @distube/ytdl-core
 
-YouTube video info and downloads for Node.js. A DisTube fork of `ytdl-core`.
+YouTube video info and downloads for Node.js. A DisTube fork of [fent/node-ytdl-core](https://github.com/fent/node-ytdl-core).
 
 **[Documentation](https://distube.js.org/ytdl-core/)** · [Getting started](https://distube.js.org/ytdl-core/guides/getting-started/) · [API reference](https://distube.js.org/ytdl-core/api/readme/)
 
@@ -59,6 +59,4 @@ Run `bun install`, then `bun run verify` for the offline gates.
 
 ## License
 
-MIT. Originally [fent/node-ytdl-core](https://github.com/fent/node-ytdl-core) and its contributors.
-
-SABR streaming uses [googlevideo](https://github.com/LuanRT/googlevideo), MIT, as a dependency.
+MIT.
