@@ -2,10 +2,14 @@
 title: Get info
 description: Read a video's details, formats and related videos.
 sidebar:
-  order: 2
+  order: 3
 ---
 
 ```ts
+import { Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+
 const info = await yt.getInfo("aqz-KE-bpKQ");
 
 info.videoDetails.title;
@@ -22,11 +26,16 @@ Fields YouTube leaves out are `undefined`, and missing lists are empty.
 
 Everything `getInfo` returns is listed in [`VideoInfo`](../../api/interfaces/videoinfo/), [`VideoDetails`](../../api/interfaces/videodetails/) and [`VideoFormat`](../../api/interfaces/videoformat/).
 
-A format whose `url` is `undefined` is served only through SABR. `download` still streams it.
+A format whose `url` is `undefined` streams over SABR. `download` still streams it. See [Start time](../download/#start-time).
 
 ## Cancel a lookup
 
 ```ts
+import { Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const url: string;
+
 const info = await yt.getInfo(url, { signal: AbortSignal.timeout(10_000) });
 ```
 

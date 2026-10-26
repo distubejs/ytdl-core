@@ -2,13 +2,16 @@
 title: Errors
 description: Handle failures by their code.
 sidebar:
-  order: 13
+  order: 11
 ---
 
-Every failure is a `YtdlError` with a `code`. Switch on the code, not the message:
+Every failure is a `YtdlError` with a `code`. Switch on the code, not the message. For `AGE_RESTRICTED` and `BOT_CHECK`, see [Cookies](../cookies/).
 
 ```ts
-import { YtdlError } from "@distube/ytdl-core";
+import { Ytdl, YtdlError } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const url: string;
 
 try {
   await yt.getInfo(url);
@@ -19,36 +22,40 @@ try {
 }
 ```
 
-`getCaptions` rejects with `NO_CAPTIONS` when the video has no track in the language you asked for, and the message lists the languages it has.
+`getCaptions` rejects with `NO_CAPTIONS` when the video has no track in the language you asked for. See [Captions](../captions/#choose-a-track).
 
-During a download, a SABR stream that fails after YouTube answers a media request with HTTP 403 resumes. `onRetry` receives `reason: "HTTP 403"`, and from the second retry the failed client is skipped, so a persistent 403 moves the download to the next client.
+During a download, a SABR stream that gets HTTP 403 from YouTube resumes, as described in [Resume](../download/#resume). `onRetry` receives `reason: "HTTP 403"`. From the second retry the failed client is skipped, so a persistent 403 moves the download to the next client.
 
 A download stream emits the same errors as an `error` event, or rejects its reads for a web stream.
 
-Every code and what it means is listed in [`YtdlErrorCode`](../../api/enumerations/ytdlerrorcode/).
+Every code is listed in [`YtdlErrorCode`](../../api/enumerations/ytdlerrorcode/).
 
 ## Attempts
 
-When every client fails, the error takes the highest-ranked outcome any of them reported. A private video says `PRIVATE` even if another client only saw a bot check. `error.attempts` lists every rung tried, in order:
+When every client fails, the error takes the highest-ranked outcome any of them reported. A private video says `PRIVATE` even if another client only saw a bot check. `error.attempts` lists every attempt, in order:
 
 ```ts
+import { YtdlError } from "@distube/ytdl-core";
+
+declare const error: YtdlError;
+
 for (const { client, signedIn, step, code, reason, cause } of error.attempts) {
   console.log(client, signedIn ? "signed in" : "signed out", step, code, reason, cause);
 }
 ```
 
-| Field      | Holds                                                                                                    |
-| ---------- | -------------------------------------------------------------------------------------------------------- |
-| `client`   | the client asked                                                                                         |
-| `signedIn` | whether the rung sent your cookie; see Clients for which rungs are asked signed in                       |
-| `step`     | where the rung failed, see below                                                                         |
-| `code`     | the outcome of that rung                                                                                 |
-| `reason`   | what YouTube or the library said; for an InnerTube error answer it includes YouTube's status and message |
-| `cause`    | the underlying error, redacted, such as the failed fetch or the player script error                      |
+| Field      | Holds                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| `client`   | the client asked                                                                                                    |
+| `signedIn` | whether the attempt sent your [cookie](../cookies/); [Clients](../clients/) lists which clients are asked signed in |
+| `step`     | where the attempt failed, see below                                                                                 |
+| `code`     | the outcome of that attempt                                                                                         |
+| `reason`   | what YouTube or the library said; for an InnerTube error answer it includes YouTube's status and message            |
+| `cause`    | the underlying error, redacted, such as the failed fetch or the player script error                                 |
 
 `step` is one of:
 
-| Step          | The rung failed while                                           |
+| Step          | The attempt failed while                                        |
 | ------------- | --------------------------------------------------------------- |
 | `player`      | fetching or preparing the player script                         |
 | `embed`       | loading the embed page for an embedded client                   |
@@ -59,22 +66,22 @@ for (const { client, signedIn, step, code, reason, cause } of error.attempts) {
 | `formats`     | finding a playable format, or the exact file a resume asked for |
 | `solve`       | solving the signature and `n` parameter of the URLs             |
 
-The step tells a library failure from a verdict about the video. A rung that fails at `player` or `solve` says nothing about whether the video is age-restricted, and its `cause` names the error.
+The step tells a library failure from a verdict about the video. An attempt that fails at `player` or `solve` says nothing about whether the video is age-restricted, and its `cause` names the error.
 
 ### Ranking
 
-The error's `code` is the attempt code that ranks first, and its own `cause` is that attempt's cause. From first to last:
+The error takes the `code` and `cause` of the attempt that ranks first. From first to last:
 
-1. `PRIVATE`, `MEMBERS_ONLY`, `PREMIUM_ONLY`, `REGION_BLOCKED`, `NOT_STARTED`, `NOT_FOUND`, in that order. These are facts about the video. `NOT_FOUND` ranks last of them because a signed-in rung can report it for a video that another client reports as region-blocked.
+1. `PRIVATE`, `MEMBERS_ONLY`, `PREMIUM_ONLY`, `REGION_BLOCKED`, `NOT_STARTED`, `NOT_FOUND`, in that order. These are facts about the video. `NOT_FOUND` ranks last of them, because a signed-in client can report it for a video that another client reports as region-blocked.
 2. `PLAYER_SOLVE_FAILED`, `INVALID_STATE`. These are library failures you can fix by updating or by reading the `cause`.
 3. `AGE_RESTRICTED`, `AUTH_FAILED`, `RATE_LIMITED`, `BOT_CHECK`, `REQUEST_FAILED`, `NO_FORMAT`.
 
-One exception covers credential failures: a signed-in client's `AUTH_FAILED`, or any failure at step `po-token`. Leave those out and look at what ranks first among the rest. If that is `NO_FORMAT`, and a signed-out client answered `NO_FORMAT` at step `playability`, the error is that `NO_FORMAT`. That answer is about the video, and a fresh cookie or token would not change it. Otherwise the order above holds, so a dead cookie still wins over a signed-out `BOT_CHECK` or `RATE_LIMITED`, because the cookie is what gets past those.
+One exception covers credential failures, meaning a signed-in client's `AUTH_FAILED` or any failure at step `po-token`. Ignore those and look at what ranks first among the rest. If that is `NO_FORMAT`, and a signed-out client answered `NO_FORMAT` at step `playability`, the error is that `NO_FORMAT`. That answer is about the video, and a fresh cookie or token would not change it. Otherwise the order above holds. A dead cookie still wins over a signed-out `BOT_CHECK` or `RATE_LIMITED`, because the cookie is what gets past those.
 
 A live stream that ended without a recording reports `NOT_FOUND`.
 
-The ranks sit in `RANK` in `src/resolve.ts`. `INVALID_URL`, `INVALID_ARGUMENT` and `NO_CAPTIONS` come last because no rung reports them. Among attempts with the winning code, the first one that carries `availableCountries` or `startTime` supplies them. The losing attempts stay in `attempts` with their own code, so an `AGE_RESTRICTED` rung is still listed when a broken player wins.
+`INVALID_URL`, `INVALID_ARGUMENT` and `NO_CAPTIONS` come last, because no attempt reports them. Among attempts with the winning code, the first one that carries `availableCountries` or `startTime` supplies them. The losing attempts stay in `attempts` with their own code, so an `AGE_RESTRICTED` attempt is still listed when a broken player wins.
 
-An `AGE_RESTRICTED` error from an instance without a cookie says once that you need to pass `cookie`. A `REGION_BLOCKED` error with no allowed countries from any client asks YouTube's web metadata once to fill `availableCountries`.
+An `AGE_RESTRICTED` error from an instance without a cookie says once that you need to pass `cookie`. When no client names the allowed countries for a `REGION_BLOCKED` error, ytdl-core asks YouTube once more to fill `availableCountries`.
 
 Messages never contain your cookie, tokens, or the signed parameters of media URLs.

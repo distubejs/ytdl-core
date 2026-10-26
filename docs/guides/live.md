@@ -11,6 +11,11 @@ A live video lists two kinds of format:
 - DASH formats (`isLive` and not `isHLS`), with audio or video only.
 
 ```ts
+import { Quality, Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const liveUrl: string;
+
 const live = await yt.getInfo(liveUrl);
 
 live.videoDetails.isLive; // true
@@ -18,15 +23,24 @@ yt.download(live, { filter: (format) => format.isHLS });
 yt.download(live, { quality: Quality.HighestAudio, filter: { isLive: true, hasAudio: true, hasVideo: false } });
 ```
 
-Both start `liveBuffer` milliseconds behind the live edge, 20 seconds by default, and end when the broadcast does:
+Both kinds start `liveBuffer` milliseconds behind the live edge, 20 seconds by default, and end when the broadcast does:
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const live: VideoInfo;
+
 yt.download(live, { filter: (format) => format.isHLS, liveBuffer: 5_000 });
 ```
 
 A channel's live URL works too. `Ytdl` looks up the stream the channel plays now, so a 24/7 stream that restarts under a new ID needs no change:
 
 ```ts
+import { Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+
 const live = await yt.getInfo("https://www.youtube.com/@NASA/live");
 ```
 

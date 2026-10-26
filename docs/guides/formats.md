@@ -2,13 +2,16 @@
 title: Choose a format
 description: Pick a format by quality, itag or your own filter.
 sidebar:
-  order: 7
+  order: 4
 ---
 
 `download` picks one format with `quality` and `filter`. `chooseFormat` does the same on a list, so you can inspect the choice first:
 
 ```ts
-import { chooseFormat, Quality } from "@distube/ytdl-core";
+import { chooseFormat, Quality, Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
 
 const format = chooseFormat(info.formats, { quality: Quality.HighestVideo, filter: { hasAudio: false } });
 console.log(format.qualityLabel, format.container);
@@ -20,9 +23,14 @@ It throws `NO_FORMAT` when nothing matches.
 
 ## Quality
 
-`quality` is a `Quality` value, an itag, or a list of itags tried in order. The default is `Quality.Highest`. Most clients answer with separate audio and video formats, so it can pick video without audio; joining the two needs a muxer such as ffmpeg.
+`quality` is a `Quality` value, an itag, or a list of itags tried in order. The default is `Quality.Highest`. Most clients answer with separate audio and video formats, so it can pick video without audio. Joining the two needs a muxer such as ffmpeg.
 
 ```ts
+import { Quality, Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 yt.download(info, { quality: Quality.LowestAudio });
 yt.download(info, { quality: Quality.HighestVideo, filter: { hasAudio: false } });
 ```
@@ -34,6 +42,11 @@ Every value is listed in [`Quality`](../../api/enumerations/quality/).
 `filter` is a criteria object, a function, or a list of them:
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 yt.download(info, { filter: { hasAudio: true, hasVideo: false } });
 yt.download(info, { filter: { hasVideo: false, audioCodec: "opus" } });
 yt.download(info, { filter: (format) => format.container === "mp4" && format.hasAudio });
@@ -46,6 +59,10 @@ A criteria object matches formats where every given field matches: `hasAudio`, `
 A list of filters is tried in order. The first entry that yields a format under `quality` wins, and `NO_FORMAT` comes only when none does:
 
 ```ts
+import { Quality, chooseFormat, type VideoInfo } from "@distube/ytdl-core";
+
+declare const info: VideoInfo;
+
 const format = chooseFormat(info.formats, {
   quality: Quality.HighestAudio,
   filter: [{ hasVideo: false, audioCodec: "opus" }, { hasVideo: false }, { hasAudio: true }],
@@ -57,6 +74,11 @@ const format = chooseFormat(info.formats, {
 Some videos have stable-volume copies (`isDrc`) that share their itag with the original, and dubbed tracks (`audioTrack`). `chooseFormat` prefers the original copy and the original-language track, and falls back to a dub only when the list has no original. `audioTrack.audioIsDefault` is YouTube's default for the request language and does not promise the original, so do not filter on it to find the original. To get a specific track, filter on its id:
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 yt.download(info, { filter: (format) => format.audioTrack?.id.startsWith("de") === true && !format.isDrc });
 ```
 
@@ -77,6 +99,10 @@ ytdl-core adds `container`, `codecs`, `audioCodec`, `videoCodec`, `audioBitrate`
 A live stream can list its auto-generated captions as a format with neither audio nor video:
 
 ```ts
+import { type VideoInfo } from "@distube/ytdl-core";
+
+declare const live: VideoInfo;
+
 const captions = live.formats.find((format) => format.captionTrack?.kind === "asr");
 captions?.captionTrack?.languageCode; // "en"
 ```

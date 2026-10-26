@@ -2,25 +2,33 @@
 title: Download
 description: Stream a format with ranges, progress and cancellation, or read one format many times.
 sidebar:
-  order: 6
+  order: 2
 ---
 
 `download` returns a Node `Readable`:
 
 ```ts
+import { Quality, Ytdl } from "@distube/ytdl-core";
 import { createWriteStream } from "node:fs";
-import { Quality } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const url: string;
 
 yt.download(url, { quality: Quality.HighestAudio, filter: { hasAudio: true, hasVideo: false } }).pipe(
   createWriteStream("audio.webm"),
 );
 ```
 
-Most clients answer with separate audio and video formats, so `Quality.Highest` can pick video without audio. Joining the two needs a muxer such as ffmpeg.
+`Quality.Highest` can pick video without audio. See [Quality](../formats/#quality).
 
 Pass the info you already have to skip a second lookup. Info that has not expired is reused as is:
 
 ```ts
+import { Quality, Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const url: string;
+
 const info = await yt.getInfo(url);
 yt.download(info, { quality: Quality.HighestAudio });
 ```
@@ -30,10 +38,16 @@ yt.download(info, { quality: Quality.HighestAudio });
 `open` takes an info and one of its formats and returns a `Media` without a request. Each `read` streams it with the same options as `download`, except the format choice:
 
 ```ts
+import { createWriteStream } from "node:fs";
+import { Quality, Ytdl, chooseFormat, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 const media = yt.open(info, chooseFormat(info.formats, { quality: Quality.HighestAudio }));
 
 media.read({ range: { start: 0, end: 1_048_575 } }).pipe(createWriteStream("head.webm"));
-media.read({ startTimeMs: 90_000 }); // a SABR format only, see below
+media.read({ startTimeMs: 90_000 }); // a SABR format only, see Start time
 ```
 
 When a read resumes on a fresh lookup, `media.info` and `media.format` become the fresh ones and later reads start from them, so a seek after an hour doesn't look the video up again. `open` throws `NO_FORMAT` for a format that isn't in `info.formats`.
@@ -43,7 +57,12 @@ When a read resumes on a fresh lookup, `media.info` and `media.format` become th
 Convert the Node stream with `Readable.toWeb`:
 
 ```ts
+import { createWriteStream } from "node:fs";
+import { Quality, Ytdl, type VideoInfo } from "@distube/ytdl-core";
 import { Readable, Writable } from "node:stream";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
 
 const stream = Readable.toWeb(yt.download(info, { quality: Quality.HighestAudio }));
 await stream.pipeTo(Writable.toWeb(createWriteStream("audio.webm")));
@@ -56,23 +75,39 @@ Cancelling the web stream destroys the download and aborts its requests.
 `range` is inclusive and counts bytes of the format:
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 yt.download(info, { range: { start: 0, end: 1_048_575 } }); // the first MiB
 yt.download(info, { range: { start: 5_000_000 } }); // from 5 MB to the end
 ```
 
 ## Start time
 
-A SABR format, one without a `url`, can start at a time instead. `startTimeMs` starts at the media segment that contains it, so the first media bytes may come a few seconds early:
+A format without a `url` streams over YouTube's SABR protocol, and only such a format can start at a time instead. `startTimeMs` starts at the media segment that contains it, so the first media bytes may come a few seconds early:
 
 ```ts
+import { Ytdl, type VideoFormat, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+declare const format: VideoFormat;
+
 yt.download(info, { format, startTimeMs: 90_000 }); // from about 1:30 to the end
 ```
 
-The stream sends the format's initialization segment first, then media to the end, and `onProgress` reports no `total`. `startTimeMs` with a direct format or with `range` fails with `INVALID_ARGUMENT`. Seek a direct format with `range` through its container index.
+The stream sends the format's initialization segment first, then media to the end, and `onProgress` reports no `total`. `startTimeMs` with a format that has a `url`, or with `range`, fails with `INVALID_ARGUMENT`. Seek those formats with `range` through their container index.
 
 ## Progress
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 yt.download(info, {
   onProgress: ({ downloaded, total }) => console.log(`${downloaded} / ${total}`),
   onRetry: ({ attempt, client, reason }) => console.log("resuming", attempt, client, reason),
@@ -84,6 +119,11 @@ A callback that throws fails the download with that error.
 ## Cancel
 
 ```ts
+import { Ytdl, type VideoInfo } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+declare const info: VideoInfo;
+
 const controller = new AbortController();
 const stream = yt.download(info, { signal: controller.signal });
 
