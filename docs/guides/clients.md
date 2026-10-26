@@ -15,7 +15,7 @@ const yt = new Ytdl({ clients: [Client.WebEmbedded, Client.Tv] });
 
 `Client` lists only clients that played a video in the live suite when each was the only client. `DEFAULT_CLIENTS` is all five in this order: `visionos`, `web_embedded`, `tv`, `mweb` and `web_creator`. An unknown name, such as a 4.x client like `"android"`, throws `INVALID_ARGUMENT`.
 
-- A client that needs a PO token is skipped without [`getPoToken`](../po-tokens/): mweb and web_creator.
+- mweb and web_creator need a [PO token](../po-tokens/), which the instance mints itself unless you pass `getPoToken`.
 - With a [cookie](../cookies/), a client that accepts one is asked again signed in, right after its signed-out request. web_creator is only asked signed in.
 - A client whose media URLs keep failing counts as blocked for ten minutes and moves to the end of the list.
 

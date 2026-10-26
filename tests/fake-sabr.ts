@@ -104,7 +104,8 @@ export interface SabrServerOptions {
 export interface SabrRequest {
   readonly playerTimeMs: number;
   readonly itags: readonly number[];
-  readonly poToken: boolean;
+  /** The attested PO token's bytes as text. */
+  readonly poToken: string | undefined;
   /** The `n` query value; the synthetic player solves `xyz` to `xyz3`. */
   readonly n: string | null;
 }
@@ -146,7 +147,8 @@ export function sabrServer(options: SabrServerOptions) {
     const body = VideoPlaybackAbrRequest.decode(new Uint8Array(await request.arrayBuffer()));
     const selected = [...body.selectedAudioFormatIds, ...body.selectedVideoFormatIds];
     const playerTimeMs = Number(body.clientAbrState?.playerTimeMs ?? 0);
-    const poToken = (body.streamerContext?.poToken?.length ?? 0) > 0;
+    const attested = body.streamerContext?.poToken;
+    const poToken = attested?.length ? new TextDecoder().decode(attested) : undefined;
     requests.push({ playerTimeMs, itags: selected.map((id) => id.itag ?? 0), poToken, n: url.searchParams.get("n") });
     if (options.failOn?.(requests.length - 1)) {
       return new Response("fake failure", { status: 500, statusText: "Internal Server Error" });

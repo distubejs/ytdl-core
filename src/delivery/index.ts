@@ -66,7 +66,7 @@ export interface ResumeRequest {
 export interface Delivery {
   readonly fetch: typeof fetch;
   readonly resume: (request: ResumeRequest) => Promise<Playback>;
-  readonly mintPoToken: ((info: VideoInfo, signal: AbortSignal) => Promise<string>) | undefined;
+  readonly mintPoToken: (info: VideoInfo, signal: AbortSignal) => Promise<string>;
 }
 
 /** One format of one `getInfo` result, ready to read; each read starts from the latest refreshed info. */

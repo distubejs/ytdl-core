@@ -11,7 +11,7 @@ export interface PoTokenRequest {
   readonly signal: AbortSignal | undefined;
 }
 
-/** Mints a PO token; plug in `createPoTokenProvider()` or your own minter. */
+/** Mints a PO token. Without one, `Ytdl` mints through its own `createPoTokenProvider()`. */
 export type GetPoToken = (request: PoTokenRequest) => Promise<string>;
 
 export interface PoTokenProviderOptions {
@@ -37,7 +37,10 @@ const disposedError = () => new YtdlError("INVALID_STATE", "The PO token provide
 
 const WORKER_URL = new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url);
 
-/** Starts a BotGuard worker thread and resolves once it can mint; rejects if BotGuard refuses the environment. */
+/**
+ * Starts a BotGuard worker thread and resolves once it can mint; rejects if BotGuard refuses the environment. A `Ytdl`
+ * without `getPoToken` starts its own; create one to share it across instances or to dispose it.
+ */
 export async function createPoTokenProvider(options: PoTokenProviderOptions = {}): Promise<PoTokenProvider> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -117,4 +120,15 @@ export async function createPoTokenProvider(options: PoTokenProviderOptions = {}
   }
   options.signal?.addEventListener("abort", disposeOnAbort, { once: true });
   return Object.assign(getPoToken, { dispose });
+}
+
+export function lazyPoTokenProvider(options: PoTokenProviderOptions): GetPoToken {
+  let provider: Promise<PoTokenProvider> | undefined;
+  return async (request) => {
+    provider ??= createPoTokenProvider(options).catch((error: unknown) => {
+      provider = undefined;
+      throw error;
+    });
+    return (await abortable(provider, request.signal))(request);
+  };
 }

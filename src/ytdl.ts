@@ -27,13 +27,13 @@ import type { VideoFormat } from "./formats.ts";
 import type { VideoInfo } from "./info.ts";
 import type { PlaylistInfo, PlaylistSummary, VideoSummary } from "./discovery.ts";
 import { getPlaylistTarget, getVideoTarget, uploads, type VideoTarget } from "./url.ts";
-import type { GetPoToken } from "./po-token/index.ts";
+import { type GetPoToken, lazyPoTokenProvider } from "./po-token/index.ts";
 import type { Client } from "./clients.ts";
 
 export interface YtdlOptions {
   /** `Cookie` header or Netscape cookie export of a signed-in YouTube session. */
   readonly cookie?: string;
-  /** Mints PO tokens; clients that need one are skipped without it. */
+  /** Mints PO tokens in place of the instance's own `createPoTokenProvider()`, started on its first mint. */
   readonly getPoToken?: GetPoToken;
   /**
    * Clients to ask, most preferred first.
@@ -127,9 +127,8 @@ export class Ytdl {
     ) {
       throw new YtdlError("INVALID_ARGUMENT", "clients must list distinct Client values");
     }
-    const credentials = { cookie: options.cookie !== undefined, poToken: options.getPoToken !== undefined };
-    if (planClients({ clients, ...credentials }, new Map(), 0).length === 0) {
-      throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie or getPoToken this instance lacks");
+    if (planClients({ clients, cookie: options.cookie !== undefined }, new Map(), 0).length === 0) {
+      throw new YtdlError("INVALID_ARGUMENT", "every listed client needs a cookie this instance lacks");
     }
     const fetcher = timed(consented(options.fetch ?? globalThis.fetch.bind(globalThis)), timeoutMs);
     this.#innertube = new InnerTube({
@@ -139,7 +138,7 @@ export class Ytdl {
       utcOffsetMinutes: options.utcOffsetMinutes,
     });
     const auth = options.cookie === undefined ? undefined : new CookieAuth({ cookie: options.cookie, fetch: fetcher });
-    const { getPoToken } = options;
+    const getPoToken = options.getPoToken ?? lazyPoTokenProvider({ fetch: options.fetch, timeoutMs });
     this.#resolver = new Resolver({
       innertube: this.#innertube,
       clients,
@@ -150,9 +149,7 @@ export class Ytdl {
     this.#delivery = {
       fetch: fetcher,
       resume: (request) => resumeInfo(this.#innertube, this.#resolver, request),
-      mintPoToken:
-        getPoToken &&
-        ((info, signal) => getPoToken({ contentBinding: info.videoDetails.id, client: info.client, signal })),
+      mintPoToken: (info, signal) => getPoToken({ contentBinding: info.videoDetails.id, client: info.client, signal }),
     };
   }
 

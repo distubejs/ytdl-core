@@ -32,13 +32,11 @@ interface Rung {
 interface PlanConfig {
   readonly clients: readonly Client[];
   readonly cookie: boolean;
-  readonly poToken: boolean;
 }
 
 export function planClients(config: PlanConfig, blocked: ReadonlyMap<Client, number>, now: number): Rung[] {
   const rungs = config.clients.flatMap((client): Rung[] => {
-    const { account, poToken } = CLIENTS[client];
-    if (poToken && !config.poToken) return [];
+    const { account } = CLIENTS[client];
     if (account === "required") return config.cookie ? [{ client, signedIn: true }] : [];
     const anonymous = { client, signedIn: false };
     return account === "optional" && config.cookie ? [anonymous, { client, signedIn: true }] : [anonymous];
@@ -54,7 +52,7 @@ export interface ResolverOptions {
   readonly innertube: InnerTube;
   readonly clients: readonly Client[];
   readonly auth: CookieAuth | undefined;
-  readonly getPoToken: GetPoToken | undefined;
+  readonly getPoToken: GetPoToken;
   readonly playerId: string | undefined;
 }
 
@@ -165,13 +163,9 @@ export class Resolver {
   }
 
   async resolve(videoId: string, options: ResolveOptions): Promise<Resolution> {
-    const { innertube, clients, auth, getPoToken } = this.#options;
+    const { innertube, clients, auth } = this.#options;
     const attempts: Attempt[] = [];
-    let rungs = planClients(
-      { clients, cookie: auth !== undefined, poToken: getPoToken !== undefined },
-      this.#blocked,
-      Date.now(),
-    );
+    let rungs = planClients({ clients, cookie: auth !== undefined }, this.#blocked, Date.now());
     if (options.prefer) {
       const preferred = options.prefer.flatMap((client) => rungs.filter((rung) => rung.client === client));
       rungs = [...preferred, ...rungs.filter((rung) => !preferred.includes(rung))];
@@ -233,10 +227,9 @@ export class Resolver {
       // A signed-in request binds to the account's Data Sync ID instead of visitor data.
       const visitor = dataSyncId ?? embed?.visitorData ?? (await innertube.visitorData(signal));
       step = "po-token";
-      const poToken =
-        client.poToken && getPoToken
-          ? await getPoToken({ contentBinding: videoId, client: rung.client, signal })
-          : undefined;
+      const poToken = client.poToken
+        ? await getPoToken({ contentBinding: videoId, client: rung.client, signal })
+        : undefined;
       step = "request";
       const authHeaders = rung.signedIn ? await auth?.headers(client.origin, signal) : undefined;
       const response = await innertube.player(

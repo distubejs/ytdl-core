@@ -23,9 +23,10 @@ const ID = "aqz-KE-bpKQ";
 const PLAYER_ID = "aaaa0001";
 const NOW = 1_700_000_000_000;
 const MINUTE = 60 * 1000;
+const TOKEN_FREE_CLIENTS = [Client.VisionOS, Client.WebEmbedded, Client.Tv];
 
-const order = (cookie: boolean, poToken: boolean) =>
-  planClients({ clients: DEFAULT_CLIENTS, cookie, poToken }, new Map(), 0).map(
+const order = (cookie: boolean) =>
+  planClients({ clients: DEFAULT_CLIENTS, cookie }, new Map(), 0).map(
     (rung) => `${rung.client}${rung.signedIn ? "+" : ""}`,
   );
 
@@ -73,19 +74,14 @@ describe("client order", () => {
     }
   });
 
-  test("the PO token rungs need a provider, and their URLs carry its token", async () => {
+  test("a PO token rung's request and URLs carry the hook's token", async () => {
     const answer = ({ client }: { client: string }) => (client === MWEB ? ciphered(ID) : unplayable("UNPLAYABLE", ""));
-    const clients = [Client.VisionOS, Client.Tv, Client.Mweb];
-    const without = fakeYouTube({ player: answer });
-    await rejection(new Ytdl({ fetch: without.fetch, playerId: PLAYER_ID, clients }).getInfo(ID));
-    expect(without.clients()).toEqual([VISIONOS, TV]);
-
     const requests: unknown[] = [];
     const withHook = fakeYouTube({ player: answer });
     const info = await new Ytdl({
       fetch: withHook.fetch,
       playerId: PLAYER_ID,
-      clients,
+      clients: [Client.VisionOS, Client.Tv, Client.Mweb],
       getPoToken: async (request) => {
         requests.push({ contentBinding: request.contentBinding, client: request.client });
         return "POTOKEN-for-test";
@@ -116,9 +112,9 @@ describe("client order", () => {
     ]);
   });
 
-  test("account rungs exist only with their credential", () => {
-    expect(order(false, false)).toEqual(["visionos", "web_embedded", "tv"]);
-    expect(order(true, true)).toEqual([
+  test("account rungs exist only with a cookie", () => {
+    expect(order(false)).toEqual(["visionos", "web_embedded", "tv", "mweb"]);
+    expect(order(true)).toEqual([
       "visionos",
       "web_embedded",
       "web_embedded+",
@@ -128,7 +124,6 @@ describe("client order", () => {
       "mweb+",
       "web_creator+",
     ]);
-    expect(order(false, true)).toEqual(["visionos", "web_embedded", "tv", "mweb"]);
   });
 
   test("the clients option is the priority order", async () => {
@@ -138,7 +133,7 @@ describe("client order", () => {
     expect(yt.clients()).toEqual([WEB_EMBEDDED, VISIONOS]);
   });
 
-  test.each([[[]], [["visionos", "visionos"]], [["nope"]], [["android"]], [["mweb"]], [["web_creator"]]])(
+  test.each([[[]], [["visionos", "visionos"]], [["nope"]], [["android"]], [["web_creator"]]])(
     "clients %p fails construction",
     (clients) => {
       expect(() => new Ytdl({ clients: clients as Client[] })).toThrow(
@@ -407,7 +402,9 @@ describe("outcomes", () => {
 
   test("an age gate without an account says how to get past it", async () => {
     const yt = fakeYouTube({ player: () => unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age") });
-    const error = await rejection(new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID }).getInfo(ID));
+    const error = await rejection(
+      new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: TOKEN_FREE_CLIENTS }).getInfo(ID),
+    );
     expect(error.code).toBe("AGE_RESTRICTED");
     expect(error.message).toContain("cookie");
   });
@@ -422,7 +419,9 @@ describe("outcomes", () => {
       },
     });
     const yt = fakeYouTube({ player: () => offline });
-    const error = await rejection(new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID }).getInfo(ID));
+    const error = await rejection(
+      new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: TOKEN_FREE_CLIENTS }).getInfo(ID),
+    );
     expect(error.code).toBe("NOT_STARTED");
     expect(error.startTime).toEqual(new Date(start * 1000));
   });
@@ -713,7 +712,7 @@ describe("attempt attribution", () => {
         new Ytdl({
           fetch: yt.fetch,
           playerId: playerId ?? PLAYER_ID,
-          ...(clients ? { clients } : {}),
+          clients: clients ?? TOKEN_FREE_CLIENTS,
           ...options,
         }).getInfo(ID),
       );
@@ -776,7 +775,7 @@ describe("input and cancellation", () => {
         return countries(["DE"]);
       },
     });
-    const error = await new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID })
+    const error = await new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: TOKEN_FREE_CLIENTS })
       .getInfo(ID, { signal: controller.signal })
       .catch((caught: unknown) => caught);
     expect(error).toBe(reason);

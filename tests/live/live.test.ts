@@ -392,16 +392,11 @@ describe.skipIf(!LIVE)("real YouTube", () => {
   );
 
   test(
-    "the MWEB rung through createPoTokenProvider",
+    "the MWEB rung through the built-in PO token provider",
     async () => {
-      const getPoToken = await createPoTokenProvider();
-      try {
-        const mweb = new Ytdl({ clients: [Client.Mweb], getPoToken });
-        const info = await plays("mweb", mweb, VIDEOS.long, await longOffsets(mweb));
-        expect(info.client).toBe("mweb");
-      } finally {
-        await getPoToken.dispose();
-      }
+      const mweb = new Ytdl({ clients: [Client.Mweb] });
+      const info = await plays("mweb", mweb, VIDEOS.long, await longOffsets(mweb));
+      expect(info.client).toBe("mweb");
     },
     TIMEOUT,
   );

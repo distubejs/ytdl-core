@@ -95,7 +95,6 @@ export async function* readSabr(
     const audio = format.hasVideo ? cheapestAudio(available)?.sabr : wanted;
     if (!wanted || !audio) throw new YtdlError("NO_FORMAT", `itag ${format.itag}: missing from the SABR session`);
     const client = CLIENTS[format.client];
-    const mint = delivery.mintPoToken;
     let mintFailure: unknown;
     let lastStatus: number | undefined;
     const stream = new SabrStream({
@@ -112,10 +111,10 @@ export async function* readSabr(
       videoPlaybackUstreamerConfig: source.config,
       clientInfo: { clientName: client.nameId, clientVersion: client.version },
       formats: available.map((track) => track.sabr),
-      callbacks: mint && {
+      callbacks: {
         // googlevideo logs a failed mint and carries on without a token.
         onMintPoToken: () =>
-          mint(info, signal).then(
+          delivery.mintPoToken(info, signal).then(
             (token) => {
               mintFailure = undefined;
               return tokenBytes(token);

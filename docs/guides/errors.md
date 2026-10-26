@@ -53,7 +53,7 @@ for (const { client, signedIn, step, code, reason, cause } of error.attempts) {
 | `player`      | fetching or preparing the player script                         |
 | `embed`       | loading the embed page for an embedded client                   |
 | `visitor`     | getting visitor data, or the Data Sync ID when signed in        |
-| `po-token`    | calling your `getPoToken`                                       |
+| `po-token`    | minting a PO token, with your `getPoToken` or the built-in one  |
 | `request`     | sending the InnerTube `/player` request                         |
 | `playability` | reading YouTube's verdict, such as private, region or bot check |
 | `formats`     | finding a playable format, or the exact file a resume asked for |

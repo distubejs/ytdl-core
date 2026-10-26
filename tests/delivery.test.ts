@@ -120,7 +120,7 @@ function setup({ fetch, options = {}, resume, ...rest }: Setup) {
         }),
       };
     },
-    mintPoToken: undefined,
+    mintPoToken: async () => "POTOKEN-for-test",
   };
   const input: Input = {
     delivery,

@@ -16,7 +16,8 @@ YouTube video info and downloads for Node.js. A DisTube fork of [fent/node-ytdl-
 - Live streams over HLS or DASH
 - SABR-only formats, which on some clients means everything above 360p
 - Signatures solved locally, no remote service
-- Age-restricted videos with a cookie, and a built-in PO token provider
+- Age-restricted videos with a cookie
+- PO tokens minted in a worker thread with no setup, for the clients that need one
 - Proxies through any `fetch`
 
 ## Install

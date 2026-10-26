@@ -28,7 +28,7 @@ interface Setup extends Omit<SabrServerOptions, "formats" | "failOn"> {
   readonly getPoToken?: (request: PoTokenRequest) => Promise<string>;
 }
 
-function setup({ formats = FORMATS, player, media, failFrom, getPoToken, ...server }: Setup = {}) {
+function setup({ formats = FORMATS, player, media, failFrom, getPoToken = stubPoToken, ...server }: Setup = {}) {
   const yt = fakeYouTube({ player: player ?? (() => sabrPlayable(ID, formats)), media });
   const failOn = failFrom === undefined ? undefined : (index: number) => index >= failFrom && yt.clients().length === 1;
   const sabr = sabrServer({ formats, failOn, ...server });
@@ -82,7 +82,7 @@ async function rangeInFirstSegment(laterPost: (init: RequestInit | undefined) =>
     }
     return served(input, init);
   }) as typeof globalThis.fetch;
-  const ytdl = new Ytdl({ fetch: spy, playerId: PLAYER_ID });
+  const ytdl = new Ytdl({ fetch: spy, playerId: PLAYER_ID, getPoToken: stubPoToken });
   const { body } = await download(ytdl, { quality: 251, range: { start: 0, end: 1_500 } });
   expect(body).toEqual(Buffer.from(track.bytes.subarray(0, 1_501)));
 }
@@ -320,7 +320,9 @@ describe("SABR delivery", () => {
       return served(input, init);
     }) as typeof globalThis.fetch;
 
-    const { body, retries } = await download(new Ytdl({ fetch, playerId: PLAYER_ID }), { quality: 251 });
+    const { body, retries } = await download(new Ytdl({ fetch, playerId: PLAYER_ID, getPoToken: stubPoToken }), {
+      quality: 251,
+    });
 
     expect(body).toEqual(Buffer.from(AUDIO.bytes));
     expect(retries).toEqual([

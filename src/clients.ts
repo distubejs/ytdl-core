@@ -11,9 +11,9 @@ export const Client = {
   WebEmbedded: "web_embedded",
   /** Samsung Tizen TV app. Accepts a cookie. */
   Tv: "tv",
-  /** Mobile website. Accepts a cookie; needs `getPoToken`. */
+  /** Mobile website. Accepts a cookie; needs a PO token. */
   Mweb: "mweb",
-  /** YouTube Studio. Needs a cookie and `getPoToken`. */
+  /** YouTube Studio. Needs a cookie and a PO token. */
   WebCreator: "web_creator",
 } as const;
 

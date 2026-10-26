@@ -6,6 +6,7 @@ import { ciphered, fakeYouTube, MEDIA_HOST, TV, unplayable, VISIONOS } from "./f
 
 const ID = "aqz-KE-bpKQ";
 const SOLVED = ["edcba", "xyz3"];
+const stubPoToken = async () => "POTOKEN-for-test";
 
 function surfaces(error: unknown): string[] {
   const out: string[] = [];
@@ -131,7 +132,7 @@ describe("redaction", () => {
       String(input) === "https://www.youtube.com/"
         ? new Response(`ytcfg.set({"LOGGED_IN":false,"echo":"${cookie}"});`)
         : yt.fetch(input, init)) as typeof fetch;
-    const withCookie = new Ytdl({ cookie, fetch: signedOut, playerId: "aaaa0003" });
+    const withCookie = new Ytdl({ cookie, fetch: signedOut, playerId: "aaaa0003", getPoToken: stubPoToken });
 
     const forms = [JSON.stringify(withCookie), String(withCookie), inspect(withCookie, { depth: 5 })];
     const error = await withCookie.getInfo(ID).catch((caught: unknown) => caught);
@@ -149,7 +150,7 @@ describe("redaction", () => {
       String(input) === "https://www.youtube.com/"
         ? new Response('ytcfg.set({"LOGGED_IN":true});')
         : yt.fetch(input, init)) as typeof fetch;
-    const error = await new Ytdl({ cookie, fetch: signedIn, playerId: "aaaa0005" })
+    const error = await new Ytdl({ cookie, fetch: signedIn, playerId: "aaaa0005", getPoToken: stubPoToken })
       .getInfo(ID)
       .catch((caught: unknown) => caught);
 
