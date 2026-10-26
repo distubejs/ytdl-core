@@ -4,7 +4,7 @@ import { CLIENTS, DEFAULT_CLIENTS, userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { consented, timed } from "./http.ts";
 import { deliver, type Delivery, Media, type Playback } from "./delivery/index.ts";
-import { checkPlayable, chooseFormat, sameFormat } from "./formats.ts";
+import { chooseFormat } from "./formats.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import {
   browsePlaylist,
@@ -179,10 +179,7 @@ export class Ytdl {
    * an expired URL refreshes `Media#info`, and later reads start from it.
    */
   open(info: VideoInfo, format: VideoFormat): Media {
-    const own = info.formats.find((candidate) => sameFormat(candidate, format));
-    if (!own) throw new YtdlError("NO_FORMAT", `itag ${format.itag} is not a format of ${info.videoDetails.id}`);
-    checkPlayable(own);
-    return new Media(this.#delivery, info, own);
+    return new Media(this.#delivery, info, chooseFormat(info.formats, { format }));
   }
 
   /**

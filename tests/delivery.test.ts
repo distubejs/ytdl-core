@@ -745,6 +745,27 @@ describe("resume through the resolver", () => {
   });
 });
 
+describe("explicit format", () => {
+  test("a format from another video's info throws NO_FORMAT before any media request", async () => {
+    const OTHER_ID = "YE7VzlLtp-4";
+    const yt = fakeYouTube({
+      player: ({ body }) =>
+        body.videoId === VIDEO_ID
+          ? playable(VIDEO_ID, [audioFormat(251)])
+          : playable(OTHER_ID, [audioFormat(140, { mimeType: 'audio/mp4; codecs="mp4a.40.2"' })]),
+      media: () => new Response(SOURCE.slice()),
+    });
+    const ytdl = new Ytdl({ fetch: yt.fetch });
+    const [infoA, infoB] = await Promise.all([ytdl.getInfo(VIDEO_ID), ytdl.getInfo(OTHER_ID)]);
+
+    const { errors } = await collectNode(ytdl.download(infoA, { format: infoB.formats[0]! }));
+
+    expect(errors).toHaveLength(1);
+    expect(YtdlError.is(errors[0], "NO_FORMAT")).toBe(true);
+    expect(yt.requests.filter((request) => request.url.startsWith(MEDIA_HOST))).toEqual([]);
+  });
+});
+
 describe("live delivery", () => {
   test.each([
     ["playlist", (url: URL) => url.pathname.endsWith(".m3u8"), "#EXTM3U\n"],

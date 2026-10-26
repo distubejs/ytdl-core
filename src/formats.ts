@@ -487,15 +487,20 @@ const PREFERENCE: readonly ((format: VideoFormat) => boolean)[] = [
 
 /**
  * Filters, then picks by quality. A filter list picks with its first entry that yields a format. An
- * explicit `format` is matched in `formats`, so a fresh list's URL replaces a stale one. A DRC variant
- * is picked only when no original matches, and a dubbed audio track only when no original-language track does.
+ * explicit `format` is matched in `formats`, so a fresh list's URL replaces a stale one, and one `formats` lacks
+ * throws `NO_FORMAT`. A DRC variant is picked only when no original matches, and a dubbed audio track only when no
+ * original-language track does.
  */
 export function chooseFormat(formats: readonly VideoFormat[], options: ChooseFormatOptions = {}): VideoFormat {
   const quality = options.quality ?? Quality.Highest;
   if (!isQuality(quality)) throw new YtdlError("INVALID_ARGUMENT", `Unknown quality ${inspect(quality)}`);
   const wanted = options.format;
-  if (wanted) checkPlayable(wanted);
-  if (wanted) return formats.find((format) => sameFormat(format, wanted)) ?? wanted;
+  if (wanted) {
+    const own = formats.find((format) => sameFormat(format, wanted));
+    if (!own) throw new YtdlError("NO_FORMAT", `itag ${wanted.itag} is not one of the given formats`);
+    checkPlayable(own);
+    return own;
+  }
   const playable = formats.filter(isPlayable);
   for (const matches of matchers(options.filter)) {
     const matching = playable.filter(matches);
