@@ -440,8 +440,8 @@ interface AttributionCase {
 describe("attempt attribution", () => {
   const cases: Record<string, AttributionCase> = {
     "a broken player is not reported as an age gate": {
-      playerId: "f0000001",
-      routes: { [playerScript("f0000001")]: () => new Response(PLAYER_JS.replace('d.set("alr","yes");', "")) },
+      playerId: "bad00001",
+      routes: { [playerScript("bad00001")]: () => new Response(PLAYER_JS.replace('d.set("alr","yes");', "")) },
       player: ({ client }) =>
         client === VISIONOS ? unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age") : ciphered(ID),
       error: {
@@ -453,7 +453,7 @@ describe("attempt attribution", () => {
             signedIn: false,
             step: "player",
             code: "PLAYER_SOLVE_FAILED",
-            reason: expect.stringContaining("f0000001"),
+            reason: expect.stringContaining("bad00001"),
             cause: expect.any(Error),
           },
           { client: "tv", signedIn: false, step: "player", code: "PLAYER_SOLVE_FAILED", cause: expect.any(Error) },
