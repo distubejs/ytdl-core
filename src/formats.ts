@@ -544,3 +544,81 @@ function pick(candidates: readonly VideoFormat[], quality: Quality): VideoFormat
   }
   return undefined;
 }
+
+interface MasterEntry {
+  readonly variant: boolean;
+  readonly url: string;
+  readonly attributes: ReadonlyMap<string, string>;
+}
+
+function attributeList(text: string): ReadonlyMap<string, string> {
+  return new Map(
+    Array.from(text.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/gu), ([, name = "", value = ""]) => [
+      name,
+      value.replace(/"/gu, ""),
+    ]),
+  );
+}
+
+function codecList(codecs: string | undefined): string[] {
+  return (codecs ?? "")
+    .split(",")
+    .map((codec) => codec.trim())
+    .filter(Boolean);
+}
+
+export function parseHlsMaster(playlist: string, base: string, client: Client): VideoFormat[] {
+  const lines = playlist.split(/\r?\n/u);
+  const entries = lines.flatMap((line, index): MasterEntry[] => {
+    const tag = /^#EXT-X-(STREAM-INF|MEDIA):/u.exec(line);
+    if (!tag) return [];
+    const variant = tag[1] === "STREAM-INF";
+    const attributes = attributeList(line.slice(tag[0].length));
+    if (!variant && attributes.get("TYPE") !== "AUDIO") return [];
+    const uri = variant
+      ? lines.slice(index + 1).find((next) => next.trim() && !next.startsWith("#"))
+      : attributes.get("URI");
+    return uri ? [{ variant, url: new URL(uri.trim(), base).href, attributes }] : [];
+  });
+  const separateAudio = new Set(
+    entries.filter((entry) => !entry.variant).map((entry) => entry.attributes.get("GROUP-ID")),
+  );
+  const variants = entries.filter((entry) => entry.variant);
+  return entries.flatMap(({ variant, url, attributes }): VideoFormat[] => {
+    const itag = num(/\/itag\/(\d+)\//u.exec(url)?.[1]);
+    if (itag === undefined) return [];
+    const group = attributes.get(variant ? "AUDIO" : "GROUP-ID");
+    const usedBy = variant ? undefined : variants.find((entry) => group && entry.attributes.get("AUDIO") === group);
+    const list = variant
+      ? codecList(attributes.get("CODECS"))
+      : codecList(usedBy?.attributes.get("CODECS")).filter((codec) => AUDIO_CODEC.test(codec));
+    const codecs = list.join(",");
+    const audioCodec = list.find((codec) => AUDIO_CODEC.test(codec));
+    const hasAudio = variant ? audioCodec !== undefined && !(group && separateAudio.has(group)) : true;
+    const [width, height] = (attributes.get("RESOLUTION") ?? "").split("x").map(Number);
+    const hasVideo = width !== undefined && height !== undefined && Number.isFinite(height) && height > 0;
+    return [
+      {
+        itag,
+        url,
+        mimeType: `${hasVideo ? "video" : "audio"}/ts; codecs="${codecs}"`,
+        container: "ts",
+        codecs,
+        videoCodec: list.find((codec) => !AUDIO_CODEC.test(codec)),
+        audioCodec: hasAudio ? audioCodec : undefined,
+        bitrate: num(attributes.get("BANDWIDTH")),
+        audioBitrate: hasAudio ? MUXED_AUDIO_KBPS[itag] : undefined,
+        ...(hasVideo ? { width, height, qualityLabel: `${height}p` } : {}),
+        fps: num(attributes.get("FRAME-RATE")),
+        isDrc: false,
+        isDrm: false,
+        isOtf: false,
+        hasAudio,
+        hasVideo,
+        isLive: true,
+        isHLS: true,
+        client,
+      },
+    ];
+  });
+}

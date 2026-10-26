@@ -1,9 +1,27 @@
 import { relatedVideos } from "./discovery.ts";
-import { at, collect, type Json, list, num, parseAbbreviated, parseClock, str, text, thumbnails } from "./json.ts";
+import { userAgentHeader } from "./clients.ts";
+import { YtdlError } from "./errors.ts";
+import { parseHlsMaster, sameFormat } from "./formats.ts";
+import {
+  at,
+  collect,
+  isRecord,
+  type Json,
+  list,
+  num,
+  parseAbbreviated,
+  parseClock,
+  str,
+  text,
+  thumbnails,
+} from "./json.ts";
 import type { CaptionTrack } from "./captions.ts";
 import type { Client } from "./clients.ts";
+import type { Playback, ResumeRequest } from "./delivery/index.ts";
 import type { VideoFormat } from "./formats.ts";
 import type { VideoSummary } from "./discovery.ts";
+import type { InnerTube } from "./innertube.ts";
+import type { Resolution, Resolver } from "./resolve.ts";
 
 export interface Thumbnail {
   readonly url: string;
@@ -210,13 +228,103 @@ function captionTracks(player: Json): CaptionTrack[] {
   });
 }
 
-export type InfoBase = Pick<VideoInfo, "videoDetails" | "relatedVideos" | "playerResponse" | "captionTracks">;
+type InfoBase = Pick<VideoInfo, "videoDetails" | "relatedVideos" | "playerResponse" | "captionTracks">;
 
-export function basicInfo(player: Json, next: Json, context: DetailsContext): InfoBase {
+function toInfo(base: InfoBase, resolution: Resolution, formats: readonly VideoFormat[]): VideoInfo {
   return {
-    videoDetails: videoDetails(player, next, context),
+    videoDetails: base.videoDetails,
+    relatedVideos: base.relatedVideos,
+    playerResponse: base.playerResponse,
+    captionTracks: base.captionTracks,
+    formats,
+    client: resolution.client,
+    hlsManifestUrl: resolution.hlsManifestUrl,
+    sabr: resolution.sabr,
+    visitorData: resolution.visitorData,
+    expiresAt: resolution.expiresAt,
+    playableAt: resolution.playableAt,
+  };
+}
+
+async function basicInfo(
+  innertube: InnerTube,
+  id: string,
+  resolution: Resolution,
+  signal: AbortSignal | undefined,
+): Promise<InfoBase> {
+  const visitor = resolution.visitorData;
+  const [next, web] = await Promise.all([
+    innertube.next(id, visitor, signal).catch(() => ({}) as Json),
+    at(resolution.player, "microformat") === undefined
+      ? innertube.webMetadata(id, visitor, signal).catch(() => ({}) as Json)
+      : Promise.resolve({} as Json),
+  ]);
+  signal?.throwIfAborted();
+  const microformat = at(resolution.player, "microformat") ?? at(web, "microformat");
+  const player: Json = isRecord(microformat) ? { ...resolution.player, microformat } : resolution.player;
+  const ageRestricted = resolution.attempts.some((attempt) => attempt.code === "AGE_RESTRICTED");
+  return {
+    videoDetails: videoDetails(player, next, { ageRestricted }),
     relatedVideos: relatedVideos(next),
     playerResponse: player,
     captionTracks: captionTracks(player),
   };
+}
+
+async function playableFormats(
+  innertube: InnerTube,
+  resolution: Resolution,
+  signal: AbortSignal | undefined,
+): Promise<readonly VideoFormat[]> {
+  if (at(resolution.player, "videoDetails", "isLive") !== true || !resolution.hlsManifestUrl) {
+    return resolution.formats;
+  }
+  let playlist: string;
+  try {
+    playlist = await innertube.text(
+      resolution.hlsManifestUrl,
+      { headers: userAgentHeader(resolution.client), signal },
+      "YouTube HLS manifest",
+    );
+  } catch (error) {
+    const failed = YtdlError.is(error, "REQUEST_FAILED") || YtdlError.is(error, "RATE_LIMITED");
+    if (signal?.aborted || !failed || !resolution.formats.some((format) => format.isLive)) throw error;
+    return resolution.formats;
+  }
+  return [...parseHlsMaster(playlist, resolution.hlsManifestUrl, resolution.client), ...resolution.formats];
+}
+
+export async function lookupInfo(
+  innertube: InnerTube,
+  resolver: Resolver,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<VideoInfo> {
+  const resolution = await resolver.resolve(id, { signal });
+  const [base, formats] = await Promise.all([
+    basicInfo(innertube, id, resolution, signal),
+    playableFormats(innertube, resolution, signal),
+  ]);
+  return toInfo(base, resolution, formats);
+}
+
+export async function resumeInfo(innertube: InnerTube, resolver: Resolver, request: ResumeRequest): Promise<Playback> {
+  const { info: previous, format: failed, attempt, reason, signal } = request;
+  if (attempt <= 1) {
+    if (previous.visitorData) await innertube.replaceVisitorData(previous.visitorData, signal);
+  } else if (reason === "HTTP 403") {
+    resolver.block(failed.client);
+  }
+  const resolution = await resolver.resolve(previous.videoDetails.id, {
+    signal,
+    format: failed,
+    prefer: attempt <= 1 ? [failed.client] : undefined,
+  });
+  const formats = await playableFormats(innertube, resolution, signal);
+  const format = formats.find(
+    (candidate) => sameFormat(candidate, failed) && candidate.contentLength === failed.contentLength,
+  );
+  if (!format) throw new YtdlError("NO_FORMAT", `No client offers the same itag ${failed.itag} file after ${reason}`);
+  const base = { ...previous, playerResponse: resolution.player };
+  return { info: toInfo(base, resolution, formats), format };
 }

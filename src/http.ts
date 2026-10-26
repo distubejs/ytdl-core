@@ -93,3 +93,16 @@ export async function bodyText(
 export async function fetchText(fetchFn: typeof fetch, url: string, init: RequestInit, what: string): Promise<string> {
   return bodyText(expectOk(await send(fetchFn, url, init, what), what), init.signal, what);
 }
+
+const YOUTUBE_HOST = /(?:^|\.)youtube\.com$/u;
+
+// Without the SOCS consent cookie, YouTube may answer a logged-out request from the EU with a consent page.
+export function consented(fetchFn: typeof fetch): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const headers = new Headers(init?.headers);
+    if (!YOUTUBE_HOST.test(url.hostname) || headers.has("Cookie")) return fetchFn(input, init);
+    headers.set("Cookie", "SOCS=CAI");
+    return fetchFn(input, { ...init, headers });
+  }) as typeof fetch;
+}

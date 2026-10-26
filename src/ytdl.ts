@@ -2,10 +2,9 @@ import type { Readable } from "node:stream";
 import { CookieAuth } from "./auth.ts";
 import { CLIENTS, DEFAULT_CLIENTS, userAgentHeader } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
-import { timed } from "./http.ts";
-import { deliver, type Delivery, Media, type Playback, type ResumeRequest } from "./delivery/index.ts";
+import { consented, timed } from "./http.ts";
+import { deliver, type Delivery, Media, type Playback } from "./delivery/index.ts";
 import { checkPlayable, chooseFormat, sameFormat } from "./formats.ts";
-import { parseHlsMaster } from "./delivery/hls.ts";
 import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import {
   browsePlaylist,
@@ -19,10 +18,9 @@ import {
   searchPlaylists,
   searchVideos,
 } from "./discovery.ts";
-import { basicInfo, type InfoBase } from "./info.ts";
+import { lookupInfo, resumeInfo } from "./info.ts";
 import { InnerTube } from "./innertube.ts";
-import { at, isRecord, type Json } from "./json.ts";
-import { planClients, type Resolution, Resolver } from "./resolve.ts";
+import { planClients, Resolver } from "./resolve.ts";
 import { CaptionFormat, type CaptionOptions } from "./captions.ts";
 import type { DownloadOptions } from "./delivery/index.ts";
 import type { VideoFormat } from "./formats.ts";
@@ -151,7 +149,7 @@ export class Ytdl {
     });
     this.#delivery = {
       fetch: fetcher,
-      resume: (request) => this.#resume(request),
+      resume: (request) => resumeInfo(this.#innertube, this.#resolver, request),
       mintPoToken:
         getPoToken &&
         ((info, signal) => getPoToken({ contentBinding: info.videoDetails.id, client: info.client, signal })),
@@ -164,12 +162,7 @@ export class Ytdl {
    */
   async getInfo(video: string, options: LookupOptions = {}): Promise<VideoInfo> {
     const id = await this.#videoId(getVideoTarget(video), options.signal);
-    const resolution = await this.#resolver.resolve(id, { signal: options.signal });
-    const [basic, formats] = await Promise.all([
-      this.#basic(id, resolution, options.signal),
-      this.#playableFormats(resolution, options.signal),
-    ]);
-    return this.#toInfo(basic, resolution, formats);
+    return lookupInfo(this.#innertube, this.#resolver, id, options.signal);
   }
 
   /**
@@ -285,88 +278,4 @@ export class Ytdl {
     const info = this.#unexpired(video) ?? (await this.getInfo(await this.#videoId(target, signal), { signal }));
     return { info, format: chooseFormat(info.formats, options) };
   }
-
-  async #resume(request: ResumeRequest): Promise<Playback> {
-    const { info: previous, format: failed, attempt, reason, signal } = request;
-    if (attempt <= 1) {
-      if (previous.visitorData) await this.#innertube.replaceVisitorData(previous.visitorData, signal);
-    } else if (reason === "HTTP 403") {
-      this.#resolver.block(failed.client);
-    }
-    const resolution = await this.#resolver.resolve(previous.videoDetails.id, {
-      signal,
-      format: failed,
-      prefer: attempt <= 1 ? [failed.client] : undefined,
-    });
-    const formats = await this.#playableFormats(resolution, signal);
-    const format = formats.find(
-      (candidate) => sameFormat(candidate, failed) && candidate.contentLength === failed.contentLength,
-    );
-    if (!format) throw new YtdlError("NO_FORMAT", `No client offers the same itag ${failed.itag} file after ${reason}`);
-    return { info: this.#toInfo({ ...previous, playerResponse: resolution.player }, resolution, formats), format };
-  }
-
-  #toInfo(basic: InfoBase, resolution: Resolution, formats: readonly VideoFormat[]): VideoInfo {
-    return {
-      videoDetails: basic.videoDetails,
-      relatedVideos: basic.relatedVideos,
-      playerResponse: basic.playerResponse,
-      captionTracks: basic.captionTracks,
-      formats,
-      client: resolution.client,
-      hlsManifestUrl: resolution.hlsManifestUrl,
-      sabr: resolution.sabr,
-      visitorData: resolution.visitorData,
-      expiresAt: resolution.expiresAt,
-      playableAt: resolution.playableAt,
-    };
-  }
-
-  async #basic(id: string, resolution: Resolution, signal: AbortSignal | undefined): Promise<InfoBase> {
-    const visitor = resolution.visitorData;
-    const [next, web] = await Promise.all([
-      this.#innertube.next(id, visitor, signal).catch(() => ({}) as Json),
-      at(resolution.player, "microformat") === undefined
-        ? this.#innertube.webMetadata(id, visitor, signal).catch(() => ({}) as Json)
-        : Promise.resolve({} as Json),
-    ]);
-    signal?.throwIfAborted();
-    const microformat = at(resolution.player, "microformat") ?? at(web, "microformat");
-    const player: Json = isRecord(microformat) ? { ...resolution.player, microformat } : resolution.player;
-    return basicInfo(player, next, {
-      ageRestricted: resolution.attempts.some((attempt) => attempt.code === "AGE_RESTRICTED"),
-    });
-  }
-
-  async #playableFormats(resolution: Resolution, signal: AbortSignal | undefined): Promise<readonly VideoFormat[]> {
-    if (at(resolution.player, "videoDetails", "isLive") !== true || !resolution.hlsManifestUrl) {
-      return resolution.formats;
-    }
-    let playlist: string;
-    try {
-      playlist = await this.#innertube.text(
-        resolution.hlsManifestUrl,
-        { headers: userAgentHeader(resolution.client), signal },
-        "YouTube HLS manifest",
-      );
-    } catch (error) {
-      const failed = YtdlError.is(error, "REQUEST_FAILED") || YtdlError.is(error, "RATE_LIMITED");
-      if (signal?.aborted || !failed || !resolution.formats.some((format) => format.isLive)) throw error;
-      return resolution.formats;
-    }
-    return [...parseHlsMaster(playlist, resolution.hlsManifestUrl, resolution.client), ...resolution.formats];
-  }
-}
-
-const YOUTUBE_HOST = /(?:^|\.)youtube\.com$/u;
-
-// Without the SOCS consent cookie, YouTube may answer a logged-out request from the EU with a consent page.
-function consented(fetchFn: typeof fetch): typeof fetch {
-  return ((input: string | URL | Request, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : input);
-    const headers = new Headers(init?.headers);
-    if (!YOUTUBE_HOST.test(url.hostname) || headers.has("Cookie")) return fetchFn(input, init);
-    headers.set("Cookie", "SOCS=CAI");
-    return fetchFn(input, { ...init, headers });
-  }) as typeof fetch;
 }

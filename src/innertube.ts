@@ -158,25 +158,23 @@ export class InnerTube {
   }
 
   async channelId(url: string, signal: AbortSignal | undefined): Promise<string> {
-    const answer = await this.#post("navigation/resolve_url", WEB, signal, {
-      visitorData: undefined,
-      body: { url },
-      notFound: `${url} names no channel`,
-    });
-    const id = str(at(answer, "endpoint", "browseEndpoint", "browseId"));
+    const id = str(at(await this.#resolveUrl(url, signal), "endpoint", "browseEndpoint", "browseId"));
     if (!id || !/^UC[\w-]{22}$/u.test(id)) throw new YtdlError("NOT_FOUND", `${url} names no channel`);
     return id;
   }
 
   async channelLiveVideo(url: string, signal: AbortSignal | undefined): Promise<string> {
-    const answer = await this.#post("navigation/resolve_url", WEB, signal, {
+    const videoId = str(at(await this.#resolveUrl(url, signal), "endpoint", "watchEndpoint", "videoId"));
+    if (!videoId || !/^[\w-]{11}$/u.test(videoId)) throw new YtdlError("NOT_FOUND", `${url} has no live stream`);
+    return videoId;
+  }
+
+  #resolveUrl(url: string, signal: AbortSignal | undefined): Promise<Json> {
+    return this.#post("navigation/resolve_url", WEB, signal, {
       visitorData: undefined,
       body: { url },
       notFound: `${url} names no channel`,
     });
-    const videoId = str(at(answer, "endpoint", "watchEndpoint", "videoId"));
-    if (!videoId || !/^[\w-]{11}$/u.test(videoId)) throw new YtdlError("NOT_FOUND", `${url} has no live stream`);
-    return videoId;
   }
 
   // Without visitor data every client answers "confirm you're not a bot"; `sw.js_data` hands one out.
