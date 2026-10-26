@@ -166,7 +166,8 @@ export class Ytdl {
   }
 
   /**
-   * Streams the format `chooseFormat` picks as a Node `Readable`. An unexpired info is used as is; `Readable.toWeb`
+   * Streams the format `chooseFormat` picks as a Node `Readable`. An unexpired info is used as is; otherwise the
+   * video is looked up again, with an explicit `format` until a client offers that same file. `Readable.toWeb`
    * turns the stream into a web `ReadableStream`.
    */
   download(video: string | VideoInfo, options: DownloadOptions = {}): Readable {
@@ -272,7 +273,11 @@ export class Ytdl {
     options: DownloadOptions,
     signal: AbortSignal,
   ): Promise<Playback> {
-    const info = this.#unexpired(video) ?? (await this.getInfo(await this.#videoId(target, signal), { signal }));
+    const { format } = options;
+    if (format && typeof video !== "string") chooseFormat(video.formats, { format });
+    const info =
+      this.#unexpired(video) ??
+      (await lookupInfo(this.#innertube, this.#resolver, await this.#videoId(target, signal), signal, format));
     return { info, format: chooseFormat(info.formats, options) };
   }
 }

@@ -746,23 +746,67 @@ describe("resume through the resolver", () => {
 });
 
 describe("explicit format", () => {
-  test("a format from another video's info throws NO_FORMAT before any media request", async () => {
-    const OTHER_ID = "YE7VzlLtp-4";
+  test.each([
+    ["an unexpired", 6 * 3600_000],
+    ["an expiring", 30_000],
+  ])(
+    "a format from another video with %s info throws NO_FORMAT before any lookup or media request",
+    async (_, expiresIn) => {
+      const OTHER_ID = "YE7VzlLtp-4";
+      const yt = fakeYouTube({
+        player: ({ body }) =>
+          body.videoId === VIDEO_ID
+            ? playable(VIDEO_ID, [audioFormat(251)])
+            : playable(OTHER_ID, [audioFormat(140, { mimeType: 'audio/mp4; codecs="mp4a.40.2"' })]),
+        media: () => new Response(SOURCE.slice()),
+      });
+      const ytdl = new Ytdl({ fetch: yt.fetch });
+      const [infoA, infoB] = await Promise.all([ytdl.getInfo(VIDEO_ID), ytdl.getInfo(OTHER_ID)]);
+      const lookups = yt.playerCalls.length;
+
+      const { errors } = await collectNode(
+        ytdl.download({ ...infoA, expiresAt: Date.now() + expiresIn }, { format: infoB.formats[0]! }),
+      );
+
+      expect(errors).toHaveLength(1);
+      expect(YtdlError.is(errors[0], "NO_FORMAT")).toBe(true);
+      expect(yt.playerCalls).toHaveLength(lookups);
+      expect(yt.requests.filter((request) => request.url.startsWith(MEDIA_HOST))).toEqual([]);
+    },
+  );
+
+  test.each([
+    ["an info that expires within a minute", (earlier: VideoInfo): string | VideoInfo => earlier],
+    ["the video ID", (): string | VideoInfo => VIDEO_ID],
+  ])("%s with a format the fresh first client lacks streams that file from a later client", async (_, input) => {
+    const soon = Math.floor(Date.now() / 1000) + 30;
+    let visionLookups = 0;
+    const served: string[] = [];
     const yt = fakeYouTube({
-      player: ({ body }) =>
-        body.videoId === VIDEO_ID
-          ? playable(VIDEO_ID, [audioFormat(251)])
-          : playable(OTHER_ID, [audioFormat(140, { mimeType: 'audio/mp4; codecs="mp4a.40.2"' })]),
-      media: () => new Response(SOURCE.slice()),
+      player: ({ client }) =>
+        client === VISIONOS && visionLookups++ > 0
+          ? playable(VIDEO_ID, [audioFormat(140, { mimeType: 'audio/mp4; codecs="mp4a.40.2"' })])
+          : playable(VIDEO_ID, [
+              audioFormat(251, {
+                url: `${MEDIA_HOST}?itag=251&expire=${client === VISIONOS ? soon : 4102444800}&c=${client}`,
+                contentLength: String(SOURCE.length),
+              }),
+            ]),
+      media: (url) => {
+        const [start = 0, end = 0] = (url.searchParams.get("range") ?? "").split("-").map(Number);
+        served.push(url.searchParams.get("c") ?? "");
+        return new Response(SOURCE.slice(start, end + 1));
+      },
     });
-    const ytdl = new Ytdl({ fetch: yt.fetch });
-    const [infoA, infoB] = await Promise.all([ytdl.getInfo(VIDEO_ID), ytdl.getInfo(OTHER_ID)]);
+    const ytdl = new Ytdl({ fetch: yt.fetch, clients: [Client.VisionOS, Client.WebEmbedded] });
+    const earlier = await ytdl.getInfo(VIDEO_ID);
+    const [wanted] = earlier.formats;
 
-    const { errors } = await collectNode(ytdl.download(infoA, { format: infoB.formats[0]! }));
+    const { data, errors } = await collectNode(ytdl.download(input(earlier), { format: wanted!, chunkSize: 1000 }));
 
-    expect(errors).toHaveLength(1);
-    expect(YtdlError.is(errors[0], "NO_FORMAT")).toBe(true);
-    expect(yt.requests.filter((request) => request.url.startsWith(MEDIA_HOST))).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(data).toEqual(SOURCE);
+    expect([...new Set(served)]).toEqual([WEB_EMBEDDED]);
   });
 });
 

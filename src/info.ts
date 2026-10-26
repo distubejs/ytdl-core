@@ -300,8 +300,9 @@ export async function lookupInfo(
   resolver: Resolver,
   id: string,
   signal: AbortSignal | undefined,
+  format?: VideoFormat,
 ): Promise<VideoInfo> {
-  const resolution = await resolver.resolve(id, { signal });
+  const resolution = await resolver.resolve(id, { signal, format });
   const [base, formats] = await Promise.all([
     basicInfo(innertube, id, resolution, signal),
     playableFormats(innertube, resolution, signal),
