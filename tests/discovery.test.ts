@@ -514,6 +514,22 @@ describe("getPlaylist", () => {
     expect(playlist.videos.map((video) => video.id)).toEqual(["aqz-KE-bpKQ", "R6MlUcmOul8"]);
   });
 
+  test("a recommended video after the entries is not an entry", async () => {
+    const page = {
+      metadata: { playlistMetadataRenderer: { title: "Blender open movies" } },
+      contents: [
+        playlistEntry("aqz-KE-bpKQ"),
+        playlistEntry("R6MlUcmOul8"),
+        playlistEntry("eRsGyueVLvQ", { style: "PLAYLIST_VIDEO_RENDERER_STYLE_RECOMMENDED_VIDEO" }),
+      ],
+    };
+    const { ytdl } = setup({ [BROWSE]: pages(page) });
+
+    const playlist = await ytdl.getPlaylist(PLAYLIST_ID);
+
+    expect(playlist.videos.map((video) => video.id)).toEqual(["aqz-KE-bpKQ", "R6MlUcmOul8"]);
+  });
+
   test("a playlist YouTube does not know rejects NOT_FOUND", async () => {
     const { ytdl } = setup({ [BROWSE]: pages(MISSING_PLAYLIST) });
     expect((await rejection(ytdl.getPlaylist(PLAYLIST_ID))).code).toBe("NOT_FOUND");

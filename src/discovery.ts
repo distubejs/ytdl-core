@@ -213,6 +213,7 @@ function rendererSummary(renderer: Json): VideoSummary | undefined {
   const id = str(at(renderer, "videoId"));
   const title = text(at(renderer, "title"));
   if (!id || !title || at(renderer, "isPlayable") === false) return undefined;
+  if (at(renderer, "style") === "PLAYLIST_VIDEO_RENDERER_STYLE_RECOMMENDED_VIDEO") return undefined;
   const isLive =
     collect(renderer, "metadataBadgeRenderer").some(isLiveBadge) ||
     collect(renderer, "thumbnailOverlayTimeStatusRenderer").some((overlay) => at(overlay, "style") === "LIVE") ||
