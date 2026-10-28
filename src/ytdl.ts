@@ -53,8 +53,9 @@ export interface YtdlOptions {
    */
   readonly fetch?: typeof fetch;
   /**
-   * InnerTube `hl` for titles, search, related videos and suggestions. Player answers are always English, so
-   * playability is classified the same in every language and caption track names come back in English.
+   * The language of `getSuggestions` completions. Every other answer is English, so view, subscriber and like counts
+   * and playability parse the same in every language; titles, descriptions, relative times and caption track names
+   * come back in English.
    * @defaultValue `"en"`
    */
   readonly lang?: string;

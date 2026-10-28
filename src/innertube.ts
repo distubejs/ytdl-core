@@ -120,8 +120,6 @@ export class InnerTube {
   player(request: PlayerRequest, signal: AbortSignal | undefined): Promise<Json> {
     return this.#post("player", CLIENTS[request.client], signal, {
       videoId: request.videoId,
-      // Playability reasons are localized, and `classifyPlayability` reads them in English.
-      hl: "en",
       visitorData: request.visitorData,
       headers: request.authHeaders,
       thirdParty: request.embed && { embedUrl: EMBED_HOST },
@@ -152,7 +150,11 @@ export class InnerTube {
   }
 
   musicSuggestions(input: string, visitorData: string, signal: AbortSignal | undefined): Promise<Json> {
-    return this.#post("music/get_search_suggestions", WEB_MUSIC, signal, { visitorData, body: { input } });
+    return this.#post("music/get_search_suggestions", WEB_MUSIC, signal, {
+      visitorData,
+      hl: this.lang,
+      body: { input },
+    });
   }
 
   search(
@@ -243,7 +245,7 @@ export class InnerTube {
               clientVersion: identity.version,
               ...identity.context,
               userAgent: identity.userAgent,
-              hl: request.hl ?? this.lang,
+              hl: request.hl ?? "en",
               gl: this.country,
               utcOffsetMinutes: this.utcOffsetMinutes,
               visitorData: request.visitorData,

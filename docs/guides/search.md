@@ -44,7 +44,7 @@ const playlist = await yt.getPlaylist(playlists[0].id);
 
 `type: SearchType.Playlist` returns [`PlaylistSummary`](../../api/interfaces/playlistsummary/) values, paged and capped the same way. Each has `id`, `url`, `title`, `author`, `videoCount`, `updatedText` and `thumbnails`.
 
-`author` has the video author shape. `updatedText` is YouTube's own wording, such as `Updated 2 days ago`, in the instance's `lang` and `utcOffsetMinutes`. Mixes are left out, because `getPlaylist` cannot expand them. `SearchType.Video` is the default.
+`author` has the video author shape. `updatedText` is YouTube's own wording, such as `Updated 2 days ago`, in English and the instance's `utcOffsetMinutes`. Mixes are left out, because `getPlaylist` cannot expand them. `SearchType.Video` is the default.
 
 ### Safe search
 

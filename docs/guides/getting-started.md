@@ -47,7 +47,7 @@ const yt = new Ytdl({
 });
 ```
 
-All options are listed in [`YtdlOptions`](../../api/interfaces/ytdloptions/).
+`lang` sets the language of suggestions. Every other answer is English, so titles and counts read the same for every `lang`. All options are listed in [`YtdlOptions`](../../api/interfaces/ytdloptions/).
 
 ## Next steps
 

@@ -623,6 +623,22 @@ describe("discovery session", () => {
     expect(headers.get("X-Goog-Visitor-Id")).toBe("VISITOR-1");
   });
 
+  test("a German instance searches in English and asks for suggestions in German", async () => {
+    const yt = fakeYouTube({
+      player: () => playable(VIDEO_ID),
+      routes: { [SEARCH]: pages(SEARCH_PAGE) },
+      media: (url) => (url.hostname === "suggestqueries-clients6.youtube.com" ? new Response(SUGGESTIONS) : undefined),
+    });
+    const ytdl = new Ytdl({ fetch: yt.fetch, lang: "de" });
+
+    await ytdl.search("blender open movie", { limit: 1 });
+    await ytdl.getSuggestions("blender open movie");
+
+    const search = JSON.parse(String(yt.requests.find((request) => request.url === SEARCH)?.init?.body));
+    expect(search.context.client.hl).toBe("en");
+    expect(new URL(yt.requests.at(-1)?.url ?? "").searchParams.get("hl")).toBe("de");
+  });
+
   test("a signed-in instance searches with its visitor data and the consent cookie, without the account", async () => {
     const { yt, ytdl } = setup(
       { [SEARCH]: pages(SEARCH_PAGE) },
