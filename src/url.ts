@@ -15,6 +15,7 @@ const HOSTS = new Set([
 const PATH_PREFIXES = ["/shorts/", "/embed/", "/live/", "/v/", "/e/"];
 const CHANNEL_LIVE = /^\/(?:@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)\/live\/?$/u;
 const CHANNEL_PAGE = /^\/(?:channel\/(UC[\w-]{22})|@[^/]+|c\/[^/]+|user\/[^/]+)\/?$/u;
+const EMBED_PLAYERS = new Set(["videoseries", "live_stream"]);
 
 function youtubeUrl(text: string): URL | undefined {
   let url: URL;
@@ -41,7 +42,7 @@ export function parseVideoId(input: string): string | undefined {
     const prefix = PATH_PREFIXES.find((p) => url.pathname.startsWith(p));
     if (prefix) candidate = url.pathname.slice(prefix.length).split("/")[0];
   }
-  return candidate !== undefined && ID.test(candidate) ? candidate : undefined;
+  return candidate !== undefined && ID.test(candidate) && !EMBED_PLAYERS.has(candidate) ? candidate : undefined;
 }
 
 export type VideoTarget = { readonly id: string } | { readonly channelLive: string };

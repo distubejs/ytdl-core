@@ -25,6 +25,8 @@ describe("parseVideoId", () => {
     "https://www.youtube.com/watch?v=short",
     "https://youtu.be/",
     "abcdefghij",
+    "https://www.youtube.com/embed/videoseries?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf",
+    "https://www.youtube.com/embed/live_stream?channel=UCLA_DiR1FfKNvjuUpBHmylQ",
     "ftp://youtube.com/watch?v=abcdefghijk",
     "not a url",
   ])("rejects %s", (input) => {
