@@ -1,4 +1,4 @@
-import { userAgentHeader, WEB } from "./clients.ts";
+import { type ClientDefinition, userAgentHeader, WEB, WEB_MUSIC } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import type { InnerTube } from "./innertube.ts";
 import {
@@ -15,7 +15,7 @@ import {
   thumbnails,
 } from "./json.ts";
 import type { Thumbnail } from "./info.ts";
-import { parsePlaylistId } from "./url.ts";
+import { parsePlaylistId, parseVideoId } from "./url.ts";
 
 /** One video in search results, a playlist or a related list. */
 export interface VideoSummary {
@@ -80,12 +80,19 @@ export const SearchType = {
   Video: "video",
   /** {@link PlaylistSummary} values. */
   Playlist: "playlist",
+  /** YouTube Music songs as {@link VideoSummary} values, with the artists as `author`. */
+  Song: "song",
 } as const;
 
 export type SearchType = (typeof SearchType)[keyof typeof SearchType];
 
-// Search params `EgIQAQ==` and `EgIQAw==` select the "Videos" and "Playlists" type filters.
-const FILTERS: Readonly<Record<SearchType, string>> = { video: "EgIQAQ%3D%3D", playlist: "EgIQAw%3D%3D" };
+// Search params `EgIQAQ==` and `EgIQAw==` select the "Videos" and "Playlists" type filters; YouTube Music's
+// `EgWKAQIIAWoKEAoQAxAEEAkQBQ==` selects "Songs", as in yt-dlp `YoutubeMusicSearchURLIE._SECTIONS`.
+const FILTERS: Readonly<Record<SearchType, string>> = {
+  video: "EgIQAQ%3D%3D",
+  playlist: "EgIQAw%3D%3D",
+  song: "EgWKAQIIAWoKEAoQAxAEEAkQBQ%3D%3D",
+};
 const YOUTUBE = "https://www.youtube.com";
 
 const SUGGEST_URL = "https://suggestqueries-clients6.youtube.com/complete/search";
@@ -110,6 +117,21 @@ export function checkSearchType(type: SearchType | undefined): SearchType {
   if (type === undefined) return SearchType.Video;
   if (!isSearchType(type)) throw new YtdlError("INVALID_ARGUMENT", "type must be a SearchType value");
   return type;
+}
+
+export function checkMusic(music: boolean | undefined): boolean {
+  if (music !== undefined && typeof music !== "boolean") {
+    throw new YtdlError("INVALID_ARGUMENT", "music must be a boolean");
+  }
+  return music ?? false;
+}
+
+export function checkRadioSeed(radioSeed: string | undefined, music: boolean): string | undefined {
+  if (radioSeed === undefined) return undefined;
+  if (!music) throw new YtdlError("INVALID_ARGUMENT", "radioSeed needs music: true");
+  const id = typeof radioSeed === "string" ? parseVideoId(radioSeed) : undefined;
+  if (!id) throw new YtdlError("INVALID_ARGUMENT", "radioSeed must be a video ID or URL");
+  return id;
 }
 
 export function checkSafeSearch(safeSearch: boolean | undefined): boolean {
@@ -300,6 +322,75 @@ function summaries(value: unknown, found: VideoSummary[] = []): VideoSummary[] {
   return found;
 }
 
+// A YouTube Music byline lists the artists, then ` • ` and the album, year or length.
+function artists(value: unknown): VideoSummary["author"] {
+  const runs = list(at(value, "runs"));
+  const end = runs.findIndex((run) => at(run, "text") === " • ");
+  const names = end === -1 ? runs : runs.slice(0, end);
+  return owner(
+    names.map((run) => str(at(run, "navigationEndpoint", "browseEndpoint", "browseId"))).find(Boolean),
+    text({ runs: names }),
+    undefined,
+    [],
+    [],
+  );
+}
+
+function musicSummary(
+  id: string,
+  title: string,
+  credits: unknown,
+  lengthSeconds: number | undefined,
+  rest: Pick<VideoSummary, "viewCount" | "thumbnails" | "badges">,
+): VideoSummary {
+  return {
+    id,
+    url: watchUrl(id),
+    title,
+    author: artists(credits),
+    lengthSeconds,
+    ...rest,
+    isLive: false,
+    isUpcoming: false,
+    upcomingAt: undefined,
+  };
+}
+
+function songSummary(row: Json): VideoSummary | undefined {
+  const id = str(at(row, "playlistItemData", "videoId"));
+  const [title, credits, plays] = list(at(row, "flexColumns")).map((column) =>
+    at(column, "musicResponsiveListItemFlexColumnRenderer", "text"),
+  );
+  const name = text(title);
+  if (!id || !name) return undefined;
+  return musicSummary(
+    id,
+    name,
+    credits,
+    list(at(credits, "runs"))
+      .map((run) => parseClock(str(at(run, "text"))))
+      .find((value) => value !== undefined),
+    {
+      viewCount: parseAbbreviated(text(plays)),
+      thumbnails: thumbnails(at(row, "thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")),
+      badges: list(at(row, "badges")).flatMap(
+        (badge) => str(at(badge, "musicInlineBadgeRenderer", "accessibilityData", "accessibilityData", "label")) ?? [],
+      ),
+    },
+  );
+}
+
+function radioSummary(entry: Json): VideoSummary | undefined {
+  const id = str(at(entry, "videoId"));
+  const title = text(at(entry, "title"));
+  if (!id || !title) return undefined;
+  return musicSummary(id, title, at(entry, "longBylineText"), parseClock(text(at(entry, "lengthText"))), {
+    viewCount: undefined,
+    thumbnails: thumbnails(at(entry, "thumbnail", "thumbnails")),
+    badges: [],
+  });
+}
+
 const watchUrl = (id: string) => `${YOUTUBE}/watch?v=${id}`;
 const playlistUrl = (id: string) => `${YOUTUBE}/playlist?list=${id}`;
 
@@ -338,6 +429,22 @@ export function relatedVideos(next: Json): VideoSummary[] {
 const appended = (page: Json) =>
   collect(page, "appendContinuationItemsAction").map((action) => list(at(action, "continuationItems")));
 
+const musicShelves = (page: Json) => [
+  ...collect(page, "musicShelfRenderer"),
+  ...collect(page, "musicShelfContinuation"),
+];
+
+const songResults = (page: Json): VideoSummary[] =>
+  musicShelves(page).flatMap((shelf) =>
+    list(at(shelf, "contents")).flatMap((item) => {
+      const row = at(item, "musicResponsiveListItemRenderer");
+      const song = isRecord(row) ? songSummary(row) : undefined;
+      return song ? [song] : [];
+    }),
+  );
+
+const songLists = (page: Json) => musicShelves(page).map((shelf) => list(at(shelf, "continuations")));
+
 const searchLists = (page: Json) => [
   ...collect(page, "sectionListRenderer").map((section) => list(at(section, "contents"))),
   ...appended(page),
@@ -356,6 +463,7 @@ function continuation(lists: readonly (readonly unknown[])[]): string | undefine
     .map(
       (item) =>
         str(at(item, "continuationItemRenderer", "continuationEndpoint", "continuationCommand", "token")) ??
+        str(at(item, "nextContinuationData", "continuation")) ??
         str(
           at(
             item,
@@ -412,19 +520,27 @@ export interface SearchRequest {
   readonly signal: AbortSignal | undefined;
 }
 
+interface SearchKind<T> {
+  readonly type: SearchType;
+  readonly identity: ClientDefinition;
+  readonly entries: (page: Json) => readonly T[];
+  readonly lists: (page: Json) => readonly (readonly unknown[])[];
+}
+
 async function searchPages<T extends { readonly id: string }>(
   innertube: InnerTube,
   query: string,
-  type: SearchType,
-  entries: (page: Json) => readonly T[],
+  { type, identity, entries, lists }: SearchKind<T>,
   { safeSearch, limit, signal }: SearchRequest,
 ): Promise<T[]> {
   const visitorData = await innertube.visitorData(signal);
+  const search = (page: Parameters<InnerTube["search"]>[1]) =>
+    innertube.search(identity, page, safeSearch, visitorData, signal);
   return collectPages({
-    first: await innertube.search({ query, params: FILTERS[type] }, safeSearch, visitorData, signal),
-    more: (token) => innertube.search({ continuation: token }, safeSearch, visitorData, signal),
+    first: await search({ query, params: FILTERS[type] }),
+    more: (token) => search({ continuation: token }),
     entries,
-    lists: searchLists,
+    lists,
     limit,
     unique: true,
     signal,
@@ -432,10 +548,52 @@ async function searchPages<T extends { readonly id: string }>(
 }
 
 export const searchVideos = (innertube: InnerTube, query: string, request: SearchRequest) =>
-  searchPages(innertube, query, SearchType.Video, videoResults, request);
+  searchPages(
+    innertube,
+    query,
+    { type: SearchType.Video, identity: WEB, entries: videoResults, lists: searchLists },
+    request,
+  );
 
 export const searchPlaylists = (innertube: InnerTube, query: string, request: SearchRequest) =>
-  searchPages(innertube, query, SearchType.Playlist, playlistResults, request);
+  searchPages(
+    innertube,
+    query,
+    { type: SearchType.Playlist, identity: WEB, entries: playlistResults, lists: searchLists },
+    request,
+  );
+
+export const searchSongs = (innertube: InnerTube, query: string, request: SearchRequest) =>
+  searchPages(
+    innertube,
+    query,
+    { type: SearchType.Song, identity: WEB_MUSIC, entries: songResults, lists: songLists },
+    request,
+  );
+
+export async function musicRadio(
+  innertube: InnerTube,
+  videoId: string,
+  seed: string,
+  signal: AbortSignal | undefined,
+): Promise<VideoSummary[]> {
+  const visitorData = await innertube.visitorData(signal);
+  const page = await innertube.musicRadio(videoId, `RDAMVM${seed}`, visitorData, signal);
+  const entries = collect(page, "playlistPanelVideoRenderer").flatMap((entry) => radioSummary(entry) ?? []);
+  return withoutRepeats(entries, new Set([videoId]));
+}
+
+export async function fetchMusicSuggestions(
+  innertube: InnerTube,
+  query: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const visitorData = await innertube.visitorData(signal);
+  const page = await innertube.musicSuggestions(query, visitorData, signal);
+  return collect(page, "searchSuggestionRenderer").flatMap(
+    (suggestion) => str(at(suggestion, "navigationEndpoint", "searchEndpoint", "query")) ?? [],
+  );
+}
 
 // The page header lists "Playlist", the video count and the view count as parts after its byline row.
 function headerCounts(header: unknown, pageHeader: unknown): Pick<PlaylistInfo, "videoCount" | "viewCount"> {

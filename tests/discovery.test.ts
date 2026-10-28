@@ -15,6 +15,9 @@ import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
 // RDEM mix; badges, "taylor swift" with the video filter, an official-artist result and one without badges; resolve,
 // /@TaylorSwift; uploads, that channel's uploads list. Every answer is trimmed to the parsed fields; tracking, visitor
 // data and onesie URLs are gone, and the search continuation tokens, which encode third-party IDs, are replaced by labels.
+// Recorded 2026-10-28 from YouTube Music's WEB_REMIX without visitor data: song search for "kevin macleod", both pages, its
+// one third-party row relabelled; a two-artist explicit row from another song search, relabelled; suggestions for
+// "kevin macl"; the radio of 4jTzgLFd5_4 (Kevin MacLeod, CC BY), its third-party entries relabelled.
 const SEARCH_PAGE = fixture("search-web.json");
 const SEARCH_NEXT_PAGE = fixture("search-continuation-web.json");
 const MIXED_PAGE = fixture("search-mixed-web.json");
@@ -34,10 +37,20 @@ const CHANNEL_ID = "UCqECaJ8Gagnn7YCbPEzWH6g";
 const NEXT = fixture("next-web.json");
 const SUGGESTIONS = readFileSync(new URL("./fixtures/innertube/suggest-blender.txt", import.meta.url), "utf8");
 const VIDEO_ID = "aqz-KE-bpKQ";
+const SONGS_PAGE = fixture("search-songs-music.json");
+const SONGS_NEXT_PAGE = fixture("search-songs-continuation-music.json");
+const SONG_BADGES_PAGE = fixture("search-songs-badges-music.json");
+const MUSIC_SUGGESTIONS = fixture("suggest-music.json");
+const RADIO = fixture("next-radio-music.json");
+const RADIO_SEED = "4jTzgLFd5_4";
 
 const SEARCH = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
 const BROWSE = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false";
 const RESOLVE = "https://www.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false";
+const MUSIC_SEARCH = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false";
+const MUSIC_NEXT = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false";
+const MUSIC_SUGGEST = "https://music.youtube.com/youtubei/v1/music/get_search_suggestions?prettyPrint=false";
+const SONGS_PARAMS = "EgWKAQIIAWoKEAoQAxAEEAkQBQ%3D%3D";
 
 type Page = Record<string, unknown>;
 interface Item {
@@ -79,6 +92,13 @@ const searchPage = (entries: readonly unknown[]): Page => ({
 const matches = (value: unknown, pattern: RegExp) =>
   [...JSON.stringify(value).matchAll(pattern)].map((m) => m[1] ?? "");
 const lockupIds = (page: Page) => matches(page, /"contentId":"([\w-]{11})"/gu);
+const songIds = (page: Page) => matches(page, /"playlistItemData":\{"videoId":"([\w-]{11})"/gu);
+const radioIds = (page: Page) => matches(page, /"playlistPanelVideoRenderer":\{"videoId":"([\w-]{11})"/gu);
+const NO_SONGS: Page = {
+  contents: {
+    tabbedSearchResultsRenderer: { tabs: [{ tabRenderer: { content: { sectionListRenderer: { contents: [] } } } }] },
+  },
+};
 const firstToken = (page: Page) => /"token":"([^"]+)"/u.exec(JSON.stringify(page))?.[1] ?? "";
 
 const playlistEntry = (videoId: string, extra: Record<string, unknown> = {}) => ({
@@ -240,6 +260,128 @@ describe("search", () => {
   });
 });
 
+describe("song search", () => {
+  test("a limit past the first page fetches one continuation from YouTube Music and repeats no song", async () => {
+    const first = songIds(SONGS_PAGE);
+    const fresh = songIds(SONGS_NEXT_PAGE).filter((id) => !first.includes(id));
+    expect(fresh.length).toBeLessThan(songIds(SONGS_NEXT_PAGE).length);
+    const { yt, ytdl, bodies } = setup({ [MUSIC_SEARCH]: pages(SONGS_PAGE, SONGS_NEXT_PAGE) });
+
+    const songs = await ytdl.search("kevin macleod", { type: SearchType.Song, limit: 30 });
+
+    expect(songs.map((song) => song.id)).toEqual([...first, ...fresh].slice(0, 30));
+    expect(bodies(MUSIC_SEARCH)).toMatchObject([
+      { query: "kevin macleod", params: SONGS_PARAMS, context: { client: { clientName: "WEB_REMIX" } } },
+      { continuation: "SONGS-PAGE-2" },
+    ]);
+    const headers = new Headers(yt.requests.find((request) => request.url === MUSIC_SEARCH)?.init?.headers);
+    expect(headers.get("Origin")).toBe("https://music.youtube.com");
+    expect(headers.get("X-YouTube-Client-Name")).toBe("67");
+  });
+
+  test("a song carries its artists, length, plays and labels", async () => {
+    const { ytdl } = setup({ [MUSIC_SEARCH]: pages(SONGS_PAGE) });
+    const badged = setup({ [MUSIC_SEARCH]: pages(SONG_BADGES_PAGE) }).ytdl;
+
+    const [song] = await ytdl.search("kevin macleod", { type: SearchType.Song, limit: 1 });
+    const [explicit] = await badged.search("relabelled", { type: SearchType.Song, limit: 1 });
+
+    expect(song).toMatchObject({
+      id: RADIO_SEED,
+      url: `https://www.youtube.com/watch?v=${RADIO_SEED}`,
+      title: "Clear Air - Somewhere Sunny",
+      lengthSeconds: 184,
+      viewCount: 48_000,
+      badges: [],
+      isLive: false,
+      isUpcoming: false,
+      upcomingAt: undefined,
+    });
+    expect(song?.author).toMatchObject({
+      id: "UCBqb0wSlWVFBnSuTI3Tcxig",
+      name: "Kevin MacLeod",
+      url: "https://www.youtube.com/channel/UCBqb0wSlWVFBnSuTI3Tcxig",
+    });
+    expect(song?.thumbnails.length).toBeGreaterThan(0);
+    expect(explicit).toMatchObject({
+      lengthSeconds: 236,
+      viewCount: 1_300_000_000,
+      badges: ["Explicit"],
+      isLive: false,
+    });
+    expect(explicit?.author).toMatchObject({ id: "UCrelabeledArtist2000000", name: "First Artist & Second Artist" });
+  });
+
+  test("a query nothing matches resolves to an empty list", async () => {
+    const { ytdl } = setup({ [MUSIC_SEARCH]: pages(NO_SONGS) });
+    expect(await ytdl.search("zzzzzz", { type: SearchType.Song })).toEqual([]);
+  });
+});
+
+describe("music suggestions", () => {
+  test("returns YouTube Music's text completions in answer order, without entity rows", async () => {
+    const { yt, ytdl, bodies } = setup(
+      { [MUSIC_SUGGEST]: () => Response.json(MUSIC_SUGGESTIONS) },
+      { lang: "de", country: "DE" },
+    );
+
+    const suggestions = await ytdl.getSuggestions("kevin macl", { music: true });
+
+    expect(suggestions).toEqual([
+      "kevin macleod",
+      "kevin macleod action cuts",
+      "fluffing a duck (kevin macleod)",
+      "the complex kevin macleod",
+      "monkeys spinning monkeys – kevin macleod",
+      "killers kevin macleod",
+    ]);
+    expect(bodies(MUSIC_SUGGEST)).toMatchObject([
+      { input: "kevin macl", context: { client: { clientName: "WEB_REMIX", hl: "de", gl: "DE" } } },
+    ]);
+    const headers = new Headers(yt.requests.find((request) => request.url === MUSIC_SUGGEST)?.init?.headers);
+    expect(headers.get("X-Goog-Visitor-Id")).toBe("VISITOR-1");
+  });
+
+  test.each([
+    ["HTTP 503", 503, YtdlErrorCode.REQUEST_FAILED],
+    ["HTTP 429", 429, YtdlErrorCode.RATE_LIMITED],
+  ] as const)("%s rejects %s", async (_, status, code) => {
+    const { yt, ytdl } = setup({ [MUSIC_SUGGEST]: () => new Response("no", { status }) });
+    expect((await rejection(ytdl.getSuggestions("kevin macl", { music: true }))).code).toBe(code);
+    expect(yt.requests.map((request) => request.url)).toContain(MUSIC_SUGGEST);
+  });
+});
+
+describe("music radio", () => {
+  test("one next request with no player request returns the radio without its seed", async () => {
+    const { yt, ytdl, bodies } = setup({ [MUSIC_NEXT]: pages(RADIO) });
+
+    const radio = await ytdl.getRelated(RADIO_SEED, { music: true });
+
+    expect(radioIds(RADIO)[0]).toBe(RADIO_SEED);
+    expect(radio.map((song) => song.id)).toEqual(radioIds(RADIO).slice(1));
+    expect(radio[0]).toMatchObject({ id: "_rh4iAZdLdU", title: "Clear Air", lengthSeconds: 184, viewCount: undefined });
+    expect(radio[0]?.author).toMatchObject({ id: "UCBqb0wSlWVFBnSuTI3Tcxig", name: "Kevin MacLeod" });
+    expect(bodies(MUSIC_NEXT)).toMatchObject([
+      { videoId: RADIO_SEED, playlistId: `RDAMVM${RADIO_SEED}`, context: { client: { clientName: "WEB_REMIX" } } },
+    ]);
+    expect(yt.playerCalls).toHaveLength(0);
+  });
+
+  test("a radio seed continues that radio from the given song, without the song", async () => {
+    const { ytdl, bodies } = setup({ [MUSIC_NEXT]: pages(RADIO) });
+
+    const radio = await ytdl.getRelated("_rh4iAZdLdU", {
+      music: true,
+      radioSeed: `https://music.youtube.com/watch?v=${RADIO_SEED}`,
+    });
+
+    expect(bodies(MUSIC_NEXT)).toMatchObject([{ videoId: "_rh4iAZdLdU", playlistId: `RDAMVM${RADIO_SEED}` }]);
+    expect(radio.map((song) => song.id)).not.toContain("_rh4iAZdLdU");
+    expect(radio.length).toBe(radioIds(RADIO).length - 1);
+  });
+});
+
 describe("discovery arguments", () => {
   test.each([
     ["a blank search query", (ytdl: Ytdl) => ytdl.search("   ")],
@@ -247,6 +389,16 @@ describe("discovery arguments", () => {
     ["a fractional search limit", (ytdl: Ytdl) => ytdl.search("nasa", { limit: 1.5 })],
     ["a zero playlist limit", (ytdl: Ytdl) => ytdl.getPlaylist(PLAYLIST_ID, { limit: 0 })],
     ["a blank suggestion query", (ytdl: Ytdl) => ytdl.getSuggestions(" ")],
+    [
+      "a non-boolean suggestion music",
+      (ytdl: Ytdl) => ytdl.getSuggestions("nasa", { music: "yes" as unknown as boolean }),
+    ],
+    ["a non-boolean related music", (ytdl: Ytdl) => ytdl.getRelated(VIDEO_ID, { music: "yes" as unknown as boolean })],
+    ["a radio seed without music", (ytdl: Ytdl) => ytdl.getRelated(VIDEO_ID, { radioSeed: RADIO_SEED })],
+    [
+      "a radio seed that is no video",
+      (ytdl: Ytdl) => ytdl.getRelated(VIDEO_ID, { music: true, radioSeed: "not a video" }),
+    ],
   ])("%s rejects INVALID_ARGUMENT before any request", async (_, call) => {
     const { yt, ytdl } = setup({});
     expect((await rejection(call(ytdl))).code).toBe("INVALID_ARGUMENT");
@@ -422,6 +574,19 @@ describe("discovery session", () => {
     await ytdl.search("blender open movie", { limit: 1 });
     await ytdl.getInfo(VIDEO_ID);
     expect(yt.visitorFetches()).toBe(1);
+  });
+
+  test("song search then a music radio on a new instance fetch visitor data once and both send it", async () => {
+    const { yt, ytdl } = setup({ [MUSIC_SEARCH]: pages(SONGS_PAGE), [MUSIC_NEXT]: pages(RADIO) });
+
+    await ytdl.search("kevin macleod", { type: SearchType.Song, limit: 1 });
+    await ytdl.getRelated(RADIO_SEED, { music: true });
+
+    expect(yt.visitorFetches()).toBe(1);
+    const visitors = yt.requests
+      .filter((request) => request.url === MUSIC_SEARCH || request.url === MUSIC_NEXT)
+      .map((request) => new Headers(request.init?.headers).get("X-Goog-Visitor-Id"));
+    expect(visitors).toEqual(["VISITOR-1", "VISITOR-1"]);
   });
 
   test.each([

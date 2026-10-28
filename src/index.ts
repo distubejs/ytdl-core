@@ -3,7 +3,14 @@
  * @module ytdl-core
  */
 export { Ytdl } from "./ytdl.ts";
-export type { ListOptions, LookupOptions, SearchOptions, YtdlOptions } from "./ytdl.ts";
+export type {
+  DiscoveryOptions,
+  ListOptions,
+  LookupOptions,
+  RelatedOptions,
+  SearchOptions,
+  YtdlOptions,
+} from "./ytdl.ts";
 export { chooseFormat, Quality } from "./formats.ts";
 export type {
   AudioTrack,

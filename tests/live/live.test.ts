@@ -30,6 +30,8 @@ const VIDEOS = {
   live: "https://www.youtube.com/@LofiGirl/live", // 24/7 lofi hip hop radio
 } as const;
 const SEARCH_QUERY = "blender open movie";
+const MUSIC_QUERY = "kevin macleod"; // CC BY music
+const MUSIC_SONG = "4jTzgLFd5_4"; // Kevin MacLeod, Clear Air - Somewhere Sunny, CC BY
 const PLAYLIST = "PL2aBZuCeDwlRF14ds9UR1uVpLRjDQy7d5"; // NASA, Perseverance Mars Rover, over 100 entries
 
 const EJS_COMMIT = "68448fa"; // yt-dlp/ejs src/yt/solver/test/tests.ts, Unlicense
@@ -321,6 +323,28 @@ describe.skipIf(!LIVE)("real YouTube", () => {
       const suggestions = await yt.getSuggestions(SEARCH_QUERY);
       expect(suggestions.length).toBeGreaterThan(0);
       rows.push(`  suggestions "${SEARCH_QUERY}": ${suggestions.length}`);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "discovery music search, suggestions and radio come from YouTube Music",
+    async () => {
+      const songs = await yt.search(MUSIC_QUERY, { type: SearchType.Song, limit: 30 });
+      expect(songs).toHaveLength(30);
+      expect(new Set(songs.map((song) => song.id)).size).toBe(30);
+      const suggestions = await yt.getSuggestions("kevin macl", { music: true });
+      expect(suggestions.length).toBeGreaterThan(0);
+      const radio = await yt.getRelated(MUSIC_SONG, { music: true });
+      expect(radio.length).toBeGreaterThan(0);
+      expect(radio.map((song) => song.id)).not.toContain(MUSIC_SONG);
+      const next = radio[0]?.id ?? "";
+      const continued = await yt.getRelated(next, { music: true, radioSeed: MUSIC_SONG });
+      expect(continued.map((song) => song.id)).not.toContain(next);
+      rows.push(
+        `  music search "${MUSIC_QUERY}": ${songs.length}; suggestions "kevin macl": ${suggestions.length}; ` +
+          `radio ${MUSIC_SONG}: ${radio.length}; continued from ${next}: ${continued.length}`,
+      );
     },
     TIMEOUT,
   );

@@ -121,3 +121,12 @@ export const WEB: ClientDefinition = {
   version: "2.20260708.00.00",
   userAgent: CHROME,
 };
+
+export const WEB_MUSIC: ClientDefinition = {
+  ...base,
+  name: "WEB_REMIX",
+  nameId: 67,
+  version: "1.20260707.12.00",
+  userAgent: CHROME,
+  origin: "https://music.youtube.com",
+};

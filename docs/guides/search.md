@@ -1,6 +1,6 @@
 ---
 title: Search
-description: Search videos and playlists, list related videos and get search suggestions.
+description: Search videos, playlists and YouTube Music songs, list related videos or a song's radio, and get search suggestions.
 sidebar:
   order: 5
 ---
@@ -58,6 +58,25 @@ const videos = await yt.search("nasa", { safeSearch: true });
 
 `safeSearch: true` asks YouTube for Restricted Mode results on every page, for either type. YouTube decides what it filters.
 
+### YouTube Music songs
+
+```ts
+import { SearchType, Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+
+const songs = await yt.search("kevin macleod", { type: SearchType.Song, limit: 30 });
+```
+
+`type: SearchType.Song` searches YouTube Music's songs instead of YouTube's videos. The results are `VideoSummary` values, paged, capped and never repeated the same way, with these differences:
+
+- `author.name` lists the song's artists as YouTube Music shows them, such as `First Artist & Second Artist`. `author.id` and `author.url` are the first artist's channel.
+- `viewCount` is the play count.
+- `badges` holds labels such as `Explicit`.
+- A song is never live or upcoming.
+
+Albums, artists, playlists and music videos are left out. A song's `id` is an ordinary video ID, so `getInfo` and `download` play it.
+
 ## Related videos
 
 ```ts
@@ -70,6 +89,21 @@ const related = await yt.getRelated("aqz-KE-bpKQ");
 
 `getRelated` returns the same list as `getInfo(...).relatedVideos` from one request, without looking up formats. It takes the same input as `getInfo`.
 
+### A song's radio
+
+```ts
+import { Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+
+const radio = await yt.getRelated("4jTzgLFd5_4", { music: true });
+const next = await yt.getRelated(radio[0].id, { music: true, radioSeed: "4jTzgLFd5_4" });
+```
+
+`music: true` returns the song's YouTube Music radio instead, from one request, without the song itself. Entries have the artists as `author` and no `viewCount`. YouTube Music shuffles a radio, so two calls for one song can return different orders.
+
+A radio started from each new song drifts away from the first one. To stay on one radio, pass the song that started it as `radioSeed`: the answer is that radio, positioned at the video you ask for. `radioSeed` takes the same input as `getInfo` and needs `music: true`.
+
 ## Suggestions
 
 ```ts
@@ -80,15 +114,15 @@ declare const yt: Ytdl;
 const completions = await yt.getSuggestions("blender open"); // ["blender open movie", ...]
 ```
 
-The completions come in YouTube's order, in the instance's `lang` and `country`.
+The completions come in YouTube's order, in the instance's `lang` and `country`. `getSuggestions(query, { music: true })` returns YouTube Music's completions instead, without the songs and artists YouTube Music suggests beside them.
 
 ## Errors
 
-| Code               | When                                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `INVALID_ARGUMENT` | A blank query, a `limit` that is not a positive integer, a `type` that is not a `SearchType` or a `safeSearch` that is not a boolean. No request. |
-| `RATE_LIMITED`     | YouTube answered HTTP 429.                                                                                                                        |
-| `REQUEST_FAILED`   | Any other failed request or unreadable answer.                                                                                                    |
+| Code               | When                                                                                                                                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INVALID_ARGUMENT` | A blank query, a `limit` that is not a positive integer, a `type` that is not a `SearchType`, a `safeSearch` or `music` that is not a boolean, or a `radioSeed` without `music: true` or that is no video. No request. |
+| `RATE_LIMITED`     | YouTube answered HTTP 429.                                                                                                                                                                                             |
+| `REQUEST_FAILED`   | Any other failed request or unreadable answer.                                                                                                                                                                         |
 
 ## Cancel
 
@@ -104,4 +138,4 @@ const videos = await yt.search("nasa", { limit: 100, signal: AbortSignal.timeout
 
 ## Session
 
-Search, related videos and [playlists](../playlists/) use the same YouTube session as `getInfo`. None of them, suggestions included, sends the cookie, so they are not tied to your account.
+Search, related videos and [playlists](../playlists/) use the same YouTube session as `getInfo`, and so do the YouTube Music calls. None of them, suggestions included, sends the cookie, so they are not tied to your account.

@@ -1,10 +1,10 @@
-import { BROWSER, type ClientDefinition, CLIENTS, type Client, WEB, YOUTUBE_ORIGIN } from "./clients.ts";
+import { BROWSER, type ClientDefinition, CLIENTS, type Client, WEB, WEB_MUSIC, YOUTUBE_ORIGIN } from "./clients.ts";
 import { YtdlError } from "./errors.ts";
 import { abortable, bodyText, fetchText, ignore, send, statusError } from "./http.ts";
 import { at, isRecord, type Json, str, ytcfg } from "./json.ts";
 
 type Identity = Pick<ClientDefinition, "name" | "nameId" | "version" | "userAgent" | "context" | "origin">;
-type Endpoint = "player" | "next" | "navigation/resolve_url" | "search" | "browse";
+type Endpoint = "player" | "next" | "navigation/resolve_url" | "search" | "browse" | "music/get_search_suggestions";
 
 interface InnertubeRequest {
   readonly videoId?: string;
@@ -147,13 +147,22 @@ export class InnerTube {
     return this.#post("next", WEB, signal, { videoId, visitorData });
   }
 
+  musicRadio(videoId: string, playlistId: string, visitorData: string, signal: AbortSignal | undefined): Promise<Json> {
+    return this.#post("next", WEB_MUSIC, signal, { videoId, visitorData, body: { playlistId } });
+  }
+
+  musicSuggestions(input: string, visitorData: string, signal: AbortSignal | undefined): Promise<Json> {
+    return this.#post("music/get_search_suggestions", WEB_MUSIC, signal, { visitorData, body: { input } });
+  }
+
   search(
+    identity: Identity,
     page: { readonly query: string; readonly params: string } | { readonly continuation: string },
     safeSearch: boolean,
     visitorData: string,
     signal: AbortSignal | undefined,
   ): Promise<Json> {
-    return this.#post("search", WEB, signal, {
+    return this.#post("search", identity, signal, {
       visitorData,
       user: safeSearch ? { enableSafetyMode: true } : undefined,
       body: "query" in page ? { query: page.query, params: page.params } : { continuation: page.continuation },

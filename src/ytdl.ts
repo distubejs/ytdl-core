@@ -9,13 +9,18 @@ import { captionUrl, checkFormat, chooseTrack } from "./captions.ts";
 import {
   browsePlaylist,
   checkLimit,
+  checkMusic,
   checkQuery,
+  checkRadioSeed,
   checkSafeSearch,
   checkSearchType,
+  fetchMusicSuggestions,
   fetchSuggestions,
+  musicRadio,
   relatedVideos,
   SearchType,
   searchPlaylists,
+  searchSongs,
   searchVideos,
 } from "./discovery.ts";
 import { lookupInfo, resumeInfo } from "./info.ts";
@@ -85,9 +90,22 @@ export interface ListOptions extends LookupOptions {
   readonly limit?: number;
 }
 
+export interface DiscoveryOptions extends LookupOptions {
+  /** Asks YouTube Music instead of YouTube. */
+  readonly music?: boolean;
+}
+
+export interface RelatedOptions extends DiscoveryOptions {
+  /**
+   * With `music`, continues the radio of this video, an ID or a URL `getInfo` takes, from the looked-up video
+   * instead of starting that video's own radio.
+   */
+  readonly radioSeed?: string;
+}
+
 export interface SearchOptions extends ListOptions {
   /**
-   * Videos or playlists.
+   * Videos, playlists or YouTube Music songs.
    * @defaultValue `SearchType.Video`
    */
   readonly type?: SearchType;
@@ -199,13 +217,14 @@ export class Ytdl {
   }
 
   /**
-   * Videos, or playlists with `type: SearchType.Playlist`, matching `query` in YouTube's rank order, at most `limit`
-   * (20 unless set), across as many result pages as that takes. Channels, shelves and mixes are left out.
-   * Discovery requests share the instance's visitor data and never send the `cookie`.
+   * Videos, playlists with `type: SearchType.Playlist`, or YouTube Music songs with `type: SearchType.Song`, matching
+   * `query` in the provider's rank order, at most `limit` (20 unless set), across as many result pages as that takes.
+   * Channels, shelves and mixes, and YouTube Music's albums, artists, playlists and videos, are left out. Discovery
+   * requests share the instance's visitor data and never send the `cookie`.
    */
   search(
     query: string,
-    options?: SearchOptions & { readonly type?: typeof SearchType.Video },
+    options?: SearchOptions & { readonly type?: typeof SearchType.Video | typeof SearchType.Song },
   ): Promise<readonly VideoSummary[]>;
   search(
     query: string,
@@ -222,8 +241,10 @@ export class Ytdl {
       safeSearch: checkSafeSearch(options.safeSearch),
       signal: options.signal,
     };
-    return checkSearchType(options.type) === SearchType.Playlist
-      ? searchPlaylists(this.#innertube, query, request)
+    const type = checkSearchType(options.type);
+    if (type === SearchType.Playlist) return searchPlaylists(this.#innertube, query, request);
+    return type === SearchType.Song
+      ? searchSongs(this.#innertube, query, request)
       : searchVideos(this.#innertube, query, request);
   }
 
@@ -241,19 +262,28 @@ export class Ytdl {
 
   /**
    * The related videos `getInfo` returns as `relatedVideos`, from one `next` request and no player lookup.
+   * With `music`, the video's YouTube Music radio instead, without the video itself, artists as `author`.
    * Takes the same input as {@link getInfo}.
    */
-  async getRelated(video: string, options: LookupOptions = {}): Promise<readonly VideoSummary[]> {
+  async getRelated(video: string, options: RelatedOptions = {}): Promise<readonly VideoSummary[]> {
     const target = getVideoTarget(video);
+    const music = checkMusic(options.music);
+    const radioSeed = checkRadioSeed(options.radioSeed, music);
     const id = await this.#videoId(target, options.signal);
+    if (music) return musicRadio(this.#innertube, id, radioSeed ?? id, options.signal);
     const visitor = await this.#innertube.visitorData(options.signal);
     return relatedVideos(await this.#innertube.next(id, visitor, options.signal));
   }
 
-  /** YouTube's autocomplete completions for `query` in provider order, asked in the instance's `lang` and `country`. */
-  async getSuggestions(query: string, options: LookupOptions = {}): Promise<readonly string[]> {
+  /**
+   * YouTube's autocomplete completions for `query`, or YouTube Music's with `music`, in provider order, asked in the
+   * instance's `lang` and `country`. YouTube Music's song and artist suggestions are left out.
+   */
+  async getSuggestions(query: string, options: DiscoveryOptions = {}): Promise<readonly string[]> {
     checkQuery(query);
-    return fetchSuggestions(this.#innertube, query, options.signal);
+    return checkMusic(options.music)
+      ? fetchMusicSuggestions(this.#innertube, query, options.signal)
+      : fetchSuggestions(this.#innertube, query, options.signal);
   }
 
   #unexpired(video: string | VideoInfo): VideoInfo | undefined {
