@@ -400,6 +400,31 @@ describe("outcomes", () => {
     expect(error.code).toBe("PREMIUM_ONLY");
   });
 
+  test.each([
+    ["ERROR", "This video is no longer available due to a copyright claim by Country Music Television", "NOT_FOUND"],
+    [
+      "ERROR",
+      "This video contains content from Premium Media Group, who has blocked it on copyright grounds.",
+      "NOT_FOUND",
+    ],
+    [
+      "UNPLAYABLE",
+      "This video contains content from Private Island Records, who has blocked it in your country on copyright grounds.",
+      "REGION_BLOCKED",
+    ],
+  ] as const)("a %s answer with the copyright notice %p rejects %s", async (status, subreason, code) => {
+    const yt = fakeYouTube({
+      player: () =>
+        unplayable(status, "Video unavailable", {
+          errorScreen: { playerErrorMessageRenderer: { subreason: { simpleText: subreason } } },
+        }),
+    });
+    const error = await rejection(
+      new Ytdl({ fetch: yt.fetch, playerId: PLAYER_ID, clients: TOKEN_FREE_CLIENTS }).getInfo(ID),
+    );
+    expect(error.code).toBe(code);
+  });
+
   test("an age gate without an account says how to get past it", async () => {
     const yt = fakeYouTube({ player: () => unplayable("AGE_CHECK_REQUIRED", "Sign in to confirm your age") });
     const error = await rejection(

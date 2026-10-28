@@ -26,7 +26,15 @@ export function availableCountries(player: unknown): readonly string[] | undefin
   return Array.isArray(countries) ? countries.filter((country) => typeof country === "string") : undefined;
 }
 
-// Reason strings follow yt-dlp and NewPipe.
+// Reason strings follow yt-dlp and NewPipe. Copyright notices name the rights holder, so only whole phrases count.
+const REGION_PHRASES = ["in your country", "your location"];
+const COPYRIGHT_PHRASES = ["copyright claim", "copyright grounds"];
+const PRIVATE_PHRASES = ["video is private", "private video"];
+const PREMIUM_PHRASES = ["music premium", "premium members"];
+const MEMBERS_PHRASES = ["members-only", "join this channel"];
+
+const says = (reason: string, phrases: readonly string[]) => phrases.some((phrase) => reason.includes(phrase));
+
 export function classifyPlayability(player: Json): Playability {
   const status = at(player, "playabilityStatus");
   const value = at(status, "status");
@@ -60,13 +68,14 @@ export function classifyPlayability(player: Json): Playability {
     return fail("AGE_RESTRICTED");
   }
   if (lower.includes("not a bot")) return fail("BOT_CHECK");
-  if (lower.includes("private")) return fail("PRIVATE");
-  if (lower.includes("premium")) return fail("PREMIUM_ONLY");
-  if (lower.includes("members") || lower.includes("join this channel")) return fail("MEMBERS_ONLY");
-  if (lower.includes("country") || lower.includes("your location")) {
+  if (says(lower, REGION_PHRASES)) {
     const countries = availableCountries(player);
     return fail("REGION_BLOCKED", countries ? { availableCountries: countries } : {});
   }
+  if (says(lower, COPYRIGHT_PHRASES)) return fail("NOT_FOUND");
+  if (says(lower, PRIVATE_PHRASES)) return fail("PRIVATE");
+  if (says(lower, PREMIUM_PHRASES)) return fail("PREMIUM_ONLY");
+  if (says(lower, MEMBERS_PHRASES)) return fail("MEMBERS_ONLY");
   if (lower.includes("try again later") || lower.includes("too many requests")) return fail("RATE_LIMITED");
   if (lower.includes("recording is not available")) return fail("NOT_FOUND");
   if (value === "LOGIN_REQUIRED") return fail("BOT_CHECK");
