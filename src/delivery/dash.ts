@@ -1,4 +1,4 @@
-import { ignore } from "../http.ts";
+import { ignore, statusError } from "../http.ts";
 import { YtdlError } from "../errors.ts";
 import { LIVE_IDLE_MS, type Session, waitUntil } from "./session.ts";
 
@@ -31,10 +31,18 @@ export async function* readDashLive(
     if (url === undefined) throw new YtdlError("INVALID_STATE", `itag ${itag}: a live DASH format has no URL`);
     // A request for the next segment waits until YouTube has it; one further ahead answers 404 and one behind the DVR
     // window 500. Without `sq` YouTube answers the init segment, which names the head.
-    const response = await session.request(next === undefined ? url : `${url}&sq=${next}`, { allowNotFound: true });
+    const response = await session.request(next === undefined ? url : `${url}&sq=${next}`, {
+      allowNotFound: true,
+      allowServerError: true,
+    });
     if (!response) continue;
     const idle = response.status === 404 || response.status === 204;
     const head = headOf(response) ?? (idle ? lastHead : undefined);
+    const expired = response.status === 500 && next !== undefined && head !== undefined && next < head.sequence;
+    if (response.status >= 500 && !expired) {
+      response.body?.cancel().catch(ignore);
+      throw statusError(response.status, `itag ${itag}: media`);
+    }
     if (!head) {
       response.body?.cancel().catch(ignore);
       throw new YtdlError("REQUEST_FAILED", `itag ${itag}: the live answer names no head segment`);
@@ -46,7 +54,7 @@ export async function* readDashLive(
       continue;
     }
     // YouTube answers 204 when the next segment does not arrive within its long-poll window.
-    if (idle) {
+    if (idle || expired) {
       response.body?.cancel().catch(ignore);
       if (next < head.sequence) {
         next = head.sequence;

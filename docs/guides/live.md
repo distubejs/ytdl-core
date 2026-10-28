@@ -54,7 +54,7 @@ A live video never streams over SABR, so its formats are the ones its HLS manife
 
 ## Resume and end
 
-A live download [resumes](../download/#resume) like any other. An expired URL, an HTTP 403 or a broken request looks the video up again and continues at the next segment, calling `onRetry`. If YouTube no longer has the missed segments, the download skips to the oldest one it still has, so the recording has a gap.
+A live download [resumes](../download/#resume) like any other. An expired URL, an HTTP 403 or a broken request looks the video up again and continues at the next segment, calling `onRetry`. If YouTube no longer has the missed segments, the download skips to the newest one, so the recording has a gap.
 
 The stream ends when the HLS playlist says the broadcast is over, or when no new segment arrives for 30 seconds. Both end the stream normally. To keep recording through a long stall, call `getInfo` again and start a new download while `videoDetails.isLive` is true.
 

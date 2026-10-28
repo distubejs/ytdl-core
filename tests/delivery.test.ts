@@ -1056,9 +1056,10 @@ describe("live DASH delivery", () => {
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,");
   });
 
-  test("a segment that left the DVR window jumps to the head", async () => {
+  test.each([404, 500])("a segment that left the DVR window with HTTP %i jumps to the head", async (behind) => {
     let served = 0;
     const { state, server } = dashOrigin({
+      behind,
       oldest: () => (served >= 2 ? state.head : 0),
       answer: (sq) => {
         if (++served === 2) state.head = 40;
@@ -1074,6 +1075,18 @@ describe("live DASH delivery", () => {
       ({ url }) => Number(url.searchParams.get("sq")) > 20 && Number(url.searchParams.get("sq")) < 40,
     );
     expect(skipped).toEqual([]);
+  });
+
+  test("a server error at the head fails the stream", async () => {
+    const { server } = dashOrigin({
+      answer: (sq) => (sq === 20 ? new Response(null, { status: 500, headers: { "x-head-seqnum": "20" } }) : undefined),
+    });
+    const { data, errors } = await collectLive(dashSetup(server.fetch).input);
+
+    expect(new TextDecoder().decode(data)).toBe("17,18,19,");
+    expect(errors).toEqual([
+      expect.objectContaining({ code: "REQUEST_FAILED", message: "itag 251: media answered HTTP 500" }),
+    ]);
   });
 
   test("a 404 at the head ends the stream 30 s after the last new segment, polling once per segment duration", async () => {

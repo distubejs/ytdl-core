@@ -49,7 +49,10 @@ export class Session {
     return false;
   }
 
-  async request(url: string, { allowNotFound = false, allowBadRequest = false } = {}): Promise<Response | undefined> {
+  async request(
+    url: string,
+    { allowNotFound = false, allowBadRequest = false, allowServerError = false } = {},
+  ): Promise<Response | undefined> {
     if (!(await this.ensureFresh())) return undefined;
     const { itag } = this.format;
     const what = `itag ${itag}: media`;
@@ -63,7 +66,13 @@ export class Session {
       await this.resume("request failed", error);
       return undefined;
     }
-    if ((allowNotFound && response.status === 404) || (allowBadRequest && response.status === 400)) return response;
+    if (
+      (allowNotFound && response.status === 404) ||
+      (allowBadRequest && response.status === 400) ||
+      (allowServerError && response.status >= 500)
+    ) {
+      return response;
+    }
     if (response.status !== 403) return expectOk(response, what);
     response.body?.cancel().catch(ignore);
     await this.resume("HTTP 403", new YtdlError("REQUEST_FAILED", `${what} answered HTTP 403`));
