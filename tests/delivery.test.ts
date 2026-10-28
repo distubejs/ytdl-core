@@ -932,21 +932,28 @@ describe("live delivery", () => {
 
 const DASH_BUDGET = 10_000;
 
-/** A live DASH origin: segments 10 ms long; `sq=head+1` waits for the next segment until `last`. */
+/**
+ * A live DASH origin: segments 10 ms long; `sq=head+1` waits for the next segment until `last`. A request without `sq`
+ * answers the init segment; one behind the window answers `behind`.
+ */
 function dashOrigin({
   head = 20,
   last = 23,
   oldest = (): number => 0,
+  behind = 404,
   answer = (_sq: number): Response | undefined => undefined,
 } = {}) {
   const state = { head };
   const server = mediaServer(
     new Uint8Array(),
     ({ url }) => {
-      const sq = Number(url.searchParams.get("sq"));
+      const requested = url.searchParams.get("sq");
+      const sq = Number(requested);
       if (sq === state.head + 1 && state.head < last) state.head++;
       const headers = { "x-head-seqnum": String(state.head), "x-head-time-millis": String(state.head * 10) };
-      if (sq < Math.max(1, oldest()) || sq > state.head) return new Response(null, { status: 404, headers });
+      if (requested === null) return new Response("init,", { headers });
+      if (sq < Math.max(1, oldest())) return new Response(null, { status: behind, headers });
+      if (sq > state.head) return new Response(null, { status: 404, headers });
       return answer(sq) ?? new Response(`${sq},`, { headers });
     },
     DASH_BUDGET,
@@ -980,6 +987,15 @@ describe("live DASH delivery", () => {
     expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
     expect(server.requests.at(-1)!.at - lastSegment.at).toBeGreaterThanOrEqual(30_000);
     expect(server.requests.at(-1)!.at - lastSegment.at).toBeLessThan(31_000);
+  });
+
+  // YouTube answered HTTP 500 for segments behind the window, 0 included, on 2026-10-28.
+  test("finds the head without asking for a segment behind the window", async () => {
+    const { server } = dashOrigin({ behind: 500 });
+    const { data, errors } = await collectLive(dashSetup(server.fetch).input);
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("17,18,19,20,21,22,23,");
   });
 
   test("a stall shorter than 30 s keeps polling and emits the segments that follow", async () => {

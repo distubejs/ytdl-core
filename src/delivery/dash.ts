@@ -29,8 +29,9 @@ export async function* readDashLive(
     const polledAt = Date.now();
     const { url, itag } = session.format;
     if (url === undefined) throw new YtdlError("INVALID_STATE", `itag ${itag}: a live DASH format has no URL`);
-    // A request for the next segment waits until YouTube has it; one further ahead or past the DVR window answers 404.
-    const response = await session.request(`${url}&sq=${next ?? 0}`, { allowNotFound: true });
+    // A request for the next segment waits until YouTube has it; one further ahead answers 404 and one behind the DVR
+    // window 500. Without `sq` YouTube answers the init segment, which names the head.
+    const response = await session.request(next === undefined ? url : `${url}&sq=${next}`, { allowNotFound: true });
     if (!response) continue;
     const idle = response.status === 404 || response.status === 204;
     const head = headOf(response) ?? (idle ? lastHead : undefined);
