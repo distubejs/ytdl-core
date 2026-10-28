@@ -14,7 +14,8 @@ const HOSTS = new Set([
 ]);
 const PATH_PREFIXES = ["/shorts/", "/embed/", "/live/", "/v/", "/e/"];
 const CHANNEL_LIVE = /^\/(?:@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)\/live\/?$/u;
-const CHANNEL_PAGE = /^\/(?:channel\/(UC[\w-]{22})|@[^/]+|c\/[^/]+|user\/[^/]+)\/?$/u;
+const CHANNEL_PAGE =
+  /^(?<channel>\/(?:channel\/(?<id>UC[\w-]{22})|@[^/]+|c\/[^/]+|user\/[^/]+))(?:\/videos|\/featured)?\/?$/u;
 const EMBED_PLAYERS = new Set(["videoseries", "live_stream"]);
 
 function youtubeUrl(text: string): URL | undefined {
@@ -80,9 +81,8 @@ export function getPlaylistTarget(input: string): PlaylistTarget {
   const url = youtubeUrl(text);
   const page = url && url.hostname.toLowerCase() !== "youtu.be" ? CHANNEL_PAGE.exec(url.pathname) : null;
   if (url && page) {
-    return page[1]
-      ? { id: uploads(page[1]) }
-      : { channel: `https://www.youtube.com${url.pathname.replace(/\/$/u, "")}` };
+    const { channel, id: channelId } = page.groups ?? {};
+    return channelId ? { id: uploads(channelId) } : { channel: `https://www.youtube.com${channel}` };
   }
   throw new YtdlError("INVALID_URL", `Not a YouTube playlist, channel or ID: ${String(input).slice(0, 200)}`);
 }

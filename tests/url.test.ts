@@ -104,6 +104,9 @@ describe("getPlaylistTarget", () => {
     ["https://m.youtube.com/@TaylorSwift/", { channel: "https://www.youtube.com/@TaylorSwift" }],
     ["youtube.com/user/taylorswift", { channel: "https://www.youtube.com/user/taylorswift" }],
     ["https://www.youtube.com/c/TaylorSwift", { channel: "https://www.youtube.com/c/TaylorSwift" }],
+    ["https://www.youtube.com/@LofiGirl/videos", { channel: "https://www.youtube.com/@LofiGirl" }],
+    ["https://www.youtube.com/user/taylorswift/featured/", { channel: "https://www.youtube.com/user/taylorswift" }],
+    ["https://www.youtube.com/channel/UCqECaJ8Gagnn7YCbPEzWH6g/videos", { id: "UUqECaJ8Gagnn7YCbPEzWH6g" }],
   ])("%s", (input, expected) => {
     expect(getPlaylistTarget(input)).toEqual(expected);
   });

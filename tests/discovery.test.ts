@@ -790,10 +790,10 @@ describe("channel uploads", () => {
     expect(uploads.videos.map((video) => video.id)).toEqual(["j8pR1tyoRFc", "mw3kSNIxjqo", "BpR280fXISA"]);
   });
 
-  test("a handle URL is resolved once, then its uploads are browsed", async () => {
+  test.each(["", "/videos"])("a handle URL%s is resolved once, then its uploads are browsed", async (tab) => {
     const { ytdl, bodies } = setup({ [RESOLVE]: pages(RESOLVED_CHANNEL), [BROWSE]: pages(UPLOADS_PAGE) });
 
-    await ytdl.getPlaylist("https://www.youtube.com/@TaylorSwift", { limit: 3 });
+    await ytdl.getPlaylist(`https://www.youtube.com/@TaylorSwift${tab}`, { limit: 3 });
 
     expect(bodies(RESOLVE).map((body) => body.url)).toEqual(["https://www.youtube.com/@TaylorSwift"]);
     expect(bodies(BROWSE)[0].browseId).toBe("VLUUqECaJ8Gagnn7YCbPEzWH6g");
