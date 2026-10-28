@@ -363,21 +363,13 @@ function songSummary(row: Json): VideoSummary | undefined {
   );
   const name = text(title);
   if (!id || !name) return undefined;
-  return musicSummary(
-    id,
-    name,
-    credits,
-    list(at(credits, "runs"))
-      .map((run) => parseClock(str(at(run, "text"))))
-      .find((value) => value !== undefined),
-    {
-      viewCount: parseAbbreviated(text(plays)),
-      thumbnails: thumbnails(at(row, "thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")),
-      badges: list(at(row, "badges")).flatMap(
-        (badge) => str(at(badge, "musicInlineBadgeRenderer", "accessibilityData", "accessibilityData", "label")) ?? [],
-      ),
-    },
-  );
+  return musicSummary(id, name, credits, parseClock(str(at(list(at(credits, "runs")).at(-1), "text"))), {
+    viewCount: parseAbbreviated(text(plays)),
+    thumbnails: thumbnails(at(row, "thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")),
+    badges: list(at(row, "badges")).flatMap(
+      (badge) => str(at(badge, "musicInlineBadgeRenderer", "accessibilityData", "accessibilityData", "label")) ?? [],
+    ),
+  });
 }
 
 function radioSummary(entry: Json): VideoSummary | undefined {

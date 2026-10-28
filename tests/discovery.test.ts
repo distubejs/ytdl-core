@@ -312,6 +312,15 @@ describe("song search", () => {
     expect(explicit?.author).toMatchObject({ id: "UCrelabeledArtist2000000", name: "First Artist & Second Artist" });
   });
 
+  test("an album named with digits is not the song's length", async () => {
+    const numberedAlbum = JSON.parse(JSON.stringify(SONG_BADGES_PAGE).replace('"Album 2"', '"25"'));
+    const { ytdl } = setup({ [MUSIC_SEARCH]: pages(numberedAlbum) });
+
+    const [song] = await ytdl.search("relabelled", { type: SearchType.Song, limit: 1 });
+
+    expect(song?.lengthSeconds).toBe(236);
+  });
+
   test("a query nothing matches resolves to an empty list", async () => {
     const { ytdl } = setup({ [MUSIC_SEARCH]: pages(NO_SONGS) });
     expect(await ytdl.search("zzzzzz", { type: SearchType.Song })).toEqual([]);
