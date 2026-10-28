@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Ytdl, YtdlError } from "../src/index.ts";
+import { chooseFormat, Quality, Ytdl, YtdlError } from "../src/index.ts";
 import { audioFormat, fakeYouTube, fixture, playable, VISIONOS } from "./fake-youtube.ts";
 
 // Recorded 2026-10-20 from VISIONOS and WEB `next` for aqz-KE-bpKQ (Big Buck Bunny, CC BY 3.0), personal data
@@ -37,6 +37,31 @@ function recorded() {
 
 const hlsPlaylist = (itag: number) =>
   `https://manifest.googlevideo.com/api/manifest/hls_playlist/id/live/itag/${itag}/index.m3u8`;
+
+function liveWithAudioRenditions() {
+  const manifest = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/live";
+  return fakeYouTube({
+    player: () => ({
+      ...playable(ID, []),
+      videoDetails: { videoId: ID, isLive: true },
+      streamingData: { adaptiveFormats: [], hlsManifestUrl: manifest },
+    }),
+    routes: {
+      [manifest]: () =>
+        new Response(
+          [
+            "#EXTM3U",
+            `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="233",URI="${hlsPlaylist(233)}"`,
+            `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="234",URI="${hlsPlaylist(234)}"`,
+            '#EXT-X-STREAM-INF:BANDWIDTH=290000,CODECS="avc1.42c00b,mp4a.40.5",RESOLUTION=256x144,FRAME-RATE=30,AUDIO="233"',
+            hlsPlaylist(269),
+            '#EXT-X-STREAM-INF:BANDWIDTH=2500000,CODECS="avc1.4d401f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30,AUDIO="234"',
+            hlsPlaylist(311),
+          ].join("\n"),
+        ),
+    },
+  });
+}
 
 const ad = (seconds: number) => ({ instreamVideoAdRenderer: { playerVars: `length_seconds=${seconds}&x=1` } });
 
@@ -268,28 +293,7 @@ describe("getInfo", () => {
   });
 
   test("a live master's audio renditions are listed audio-only and the variants that use them report no audio", async () => {
-    const manifest = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/live";
-    const yt = fakeYouTube({
-      player: () => ({
-        ...playable(ID, []),
-        videoDetails: { videoId: ID, isLive: true },
-        streamingData: { adaptiveFormats: [], hlsManifestUrl: manifest },
-      }),
-      routes: {
-        [manifest]: () =>
-          new Response(
-            [
-              "#EXTM3U",
-              `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="233",URI="${hlsPlaylist(233)}"`,
-              `#EXT-X-MEDIA:TYPE=AUDIO,NAME="audio",DEFAULT=YES,AUTOSELECT=YES,GROUP-ID="234",URI="${hlsPlaylist(234)}"`,
-              '#EXT-X-STREAM-INF:BANDWIDTH=290000,CODECS="avc1.42c00b,mp4a.40.5",RESOLUTION=256x144,FRAME-RATE=30,AUDIO="233"',
-              hlsPlaylist(269),
-              '#EXT-X-STREAM-INF:BANDWIDTH=2500000,CODECS="avc1.4d401f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30,AUDIO="234"',
-              hlsPlaylist(311),
-            ].join("\n"),
-          ),
-      },
-    });
+    const yt = liveWithAudioRenditions();
 
     const info = await new Ytdl({ fetch: yt.fetch }).getInfo(ID);
 
@@ -311,6 +315,13 @@ describe("getInfo", () => {
       isHLS: true,
       isLive: true,
     });
+  });
+
+  test("quality keywords rank a live master's audio renditions by bitrate, not list order", async () => {
+    const info = await new Ytdl({ fetch: liveWithAudioRenditions().fetch }).getInfo(ID);
+
+    expect(chooseFormat(info.formats, { quality: Quality.HighestAudio }).itag).toBe(234);
+    expect(chooseFormat(info.formats, { quality: Quality.LowestAudio }).itag).toBe(233);
   });
 
   describe("a live video whose HLS master answers 500", () => {

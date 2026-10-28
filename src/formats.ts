@@ -167,8 +167,8 @@ export interface RawFormat {
   readonly signatureCipher: string | undefined;
 }
 
-// Muxed itags carry no audio bitrate field; these are YouTube's fixed values.
-export const MUXED_AUDIO_KBPS: Readonly<Record<number, number>> = {
+// Muxed itags and live HLS audio renditions carry no audio bitrate field; these are YouTube's fixed values.
+export const FIXED_AUDIO_KBPS: Readonly<Record<number, number>> = {
   18: 96,
   22: 192,
   91: 48,
@@ -177,6 +177,8 @@ export const MUXED_AUDIO_KBPS: Readonly<Record<number, number>> = {
   94: 128,
   95: 256,
   96: 256,
+  233: 48,
+  234: 128,
 };
 
 function splitCodecs(mimeType: string): { container: string; codecs: string; list: string[] } {
@@ -266,7 +268,7 @@ export function parseFormat(entry: Json, client: Client, isLive = false): RawFor
       audioBitrate: !hasAudio
         ? undefined
         : isVideoType
-          ? MUXED_AUDIO_KBPS[itag]
+          ? FIXED_AUDIO_KBPS[itag]
           : bitrate === undefined
             ? undefined
             : Math.round(bitrate / 1000),
@@ -622,7 +624,7 @@ export function parseHlsMaster(playlist: string, base: string, client: Client): 
         videoCodec: list.find((codec) => !AUDIO_CODEC.test(codec)),
         audioCodec: hasAudio ? audioCodec : undefined,
         bitrate: num(attributes.get("BANDWIDTH")),
-        audioBitrate: hasAudio ? MUXED_AUDIO_KBPS[itag] : undefined,
+        audioBitrate: hasAudio ? FIXED_AUDIO_KBPS[itag] : undefined,
         ...(hasVideo ? { width, height, qualityLabel: `${height}p` } : {}),
         fps: num(attributes.get("FRAME-RATE")),
         isDrc: false,
