@@ -98,7 +98,7 @@ export function parseAbbreviated(input: string | undefined): number | undefined 
 }
 
 export function parseClock(input: string | undefined): number | undefined {
-  if (!input || !/^\d+(?::\d+){0,2}$/u.test(input.trim())) return undefined;
+  if (!input || !/^\d+(?::[0-5]\d){1,2}$/u.test(input.trim())) return undefined;
   return input
     .trim()
     .split(":")

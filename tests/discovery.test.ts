@@ -321,6 +321,17 @@ describe("song search", () => {
     expect(song?.lengthSeconds).toBe(236);
   });
 
+  test("a song row whose credits end in an album named with digits has no length", async () => {
+    const unlengthed = JSON.parse(
+      JSON.stringify(SONG_BADGES_PAGE).replace('"Album 2"', '"25"').replace(',{"text":" • "},{"text":"3:56"}', ""),
+    );
+    const { ytdl } = setup({ [MUSIC_SEARCH]: pages(unlengthed) });
+
+    const [song] = await ytdl.search("relabelled", { type: SearchType.Song, limit: 1 });
+
+    expect(song?.lengthSeconds).toBeUndefined();
+  });
+
   test("a query nothing matches resolves to an empty list", async () => {
     const { ytdl } = setup({ [MUSIC_SEARCH]: pages(NO_SONGS) });
     expect(await ytdl.search("zzzzzz", { type: SearchType.Song })).toEqual([]);
