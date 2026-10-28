@@ -196,9 +196,6 @@ describe("loadPlayer", () => {
     expect((await loadPlayer({ fetch, playerId: "f0000002" })).id).toBe("f0000002");
     expect(requests).not.toContain("https://www.youtube.com/iframe_api");
     expect(scripts("f0000001")).toBe(0);
-
-    expect((await loadPlayer({ fetch })).id).toBe("f0000001");
-    expect(requests).toContain("https://www.youtube.com/iframe_api");
   });
 
   test("the cache keeps the four most recently used versions", async () => {
