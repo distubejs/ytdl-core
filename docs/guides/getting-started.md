@@ -35,7 +35,7 @@ Every method accepts a video ID or any YouTube URL.
 
 ## One instance per app
 
-Create one `Ytdl` and reuse it. It keeps the session YouTube gave it, the cookie, and the clients it found blocked, so later lookups are faster and less likely to hit a bot check. Use a separate instance for each account or proxy. A [cookie](../cookies/) lets it play age-restricted videos.
+Create one `Ytdl` and reuse it. It keeps the session YouTube gave it, the cookie, and the clients it found blocked, so later lookups are faster and less likely to hit a bot check. Use a separate instance for each account or proxy. The instance mints its own [PO tokens](../po-tokens/), so there is nothing to set up for them. A [cookie](../cookies/) lets it play age-restricted videos.
 
 ```ts
 import { Ytdl } from "@distube/ytdl-core";
