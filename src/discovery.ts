@@ -207,12 +207,14 @@ function lockupOwner(metadata: unknown): VideoSummary["author"] {
   );
 }
 
+const isLiveBadge = (badge: unknown) => /LIVE/u.test(String(at(badge, "style")));
+
 function rendererSummary(renderer: Json): VideoSummary | undefined {
   const id = str(at(renderer, "videoId"));
   const title = text(at(renderer, "title"));
   if (!id || !title || at(renderer, "isPlayable") === false) return undefined;
   const isLive =
-    collect(renderer, "metadataBadgeRenderer").some((badge) => /LIVE/u.test(String(at(badge, "style")))) ||
+    collect(renderer, "metadataBadgeRenderer").some(isLiveBadge) ||
     collect(renderer, "thumbnailOverlayTimeStatusRenderer").some((overlay) => at(overlay, "style") === "LIVE") ||
     (at(renderer, "lengthText") === undefined &&
       at(renderer, "lengthSeconds") === undefined &&
@@ -238,36 +240,55 @@ function rendererSummary(renderer: Json): VideoSummary | undefined {
     lengthSeconds: isLive
       ? undefined
       : (num(at(renderer, "lengthSeconds")) ?? parseClock(text(at(renderer, "lengthText")))),
-    viewCount: parseAbbreviated(text(at(renderer, "viewCountText")) ?? text(at(renderer, "shortViewCountText"))),
+    viewCount: isLive
+      ? undefined
+      : parseAbbreviated(text(at(renderer, "viewCountText")) ?? text(at(renderer, "shortViewCountText"))),
     thumbnails: thumbnails(at(renderer, "thumbnail", "thumbnails")),
-    badges: list(at(renderer, "badges")).flatMap((badge) => str(at(badge, "metadataBadgeRenderer", "label")) ?? []),
+    badges: list(at(renderer, "badges")).flatMap((badge) => {
+      const meta = at(badge, "metadataBadgeRenderer");
+      return isLiveBadge(meta) ? [] : (str(at(meta, "label")) ?? []);
+    }),
     isLive,
     isUpcoming: at(renderer, "upcomingEventData") !== undefined,
     upcomingAt: startTime === undefined ? undefined : startTime * 1000,
   };
 }
 
+const isLiveLockupBadge = (badge: unknown) => at(badge, "badgeStyle") === "THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE";
+// A lockup marks a premiere or scheduled stream only by this badge text, with no start time; browse is always English.
+const isUpcomingLockupBadge = (badge: unknown) => at(badge, "text") === "Upcoming";
+
 function lockupSummary(lockup: Json): VideoSummary | undefined {
-  if (at(lockup, "contentType") !== "LOCKUP_CONTENT_TYPE_VIDEO") return undefined;
   const id = str(at(lockup, "contentId"));
+  const type = at(lockup, "contentType");
+  const station = type === "LOCKUP_CONTENT_TYPE_STATION" && id !== undefined && parseVideoId(id) === id;
+  if (type !== "LOCKUP_CONTENT_TYPE_VIDEO" && !station) return undefined;
   const metadata = at(lockup, "metadata", "lockupMetadataViewModel");
   const title = text(at(metadata, "title"));
   if (!id || !title) return undefined;
-  const badges = collect(lockup, "thumbnailBadgeViewModel").map((badge) => str(at(badge, "text")) ?? "");
-  const isLive = badges.some((badge) => /^live$/iu.test(badge));
+  const badgeViews = collect(lockup, "thumbnailBadgeViewModel");
+  const isLive = badgeViews.some(isLiveLockupBadge);
+  const isUpcoming = badgeViews.some(isUpcomingLockupBadge);
+  const badges = badgeViews.flatMap((badge) =>
+    isLiveLockupBadge(badge) || isUpcomingLockupBadge(badge) ? [] : (str(at(badge, "text")) ?? []),
+  );
   // Rows are [channel] then [views, age]; the views part has no "views" word for music.
   const rows = at(metadata, "metadata", "contentMetadataViewModel", "metadataRows");
+  const image = at(lockup, "contentImage");
   return {
     id,
     url: watchUrl(id),
     title,
     author: lockupOwner(metadata),
     lengthSeconds: badges.map(parseClock).find((value) => value !== undefined),
-    viewCount: parseAbbreviated(text(at(rows, 1, "metadataParts", 0, "text"))),
-    thumbnails: thumbnails(at(lockup, "contentImage", "thumbnailViewModel", "image", "sources")),
-    badges: badges.filter((badge) => badge !== "" && parseClock(badge) === undefined && !/^live$/iu.test(badge)),
+    viewCount: isLive || isUpcoming ? undefined : parseAbbreviated(text(at(rows, 1, "metadataParts", 0, "text"))),
+    thumbnails: thumbnails(
+      at(image, "thumbnailViewModel", "image", "sources") ??
+        at(image, "collectionThumbnailViewModel", "primaryThumbnail", "thumbnailViewModel", "image", "sources"),
+    ),
+    badges: badges.filter((badge) => badge !== "" && parseClock(badge) === undefined),
     isLive,
-    isUpcoming: false,
+    isUpcoming,
     upcomingAt: undefined,
   };
 }

@@ -207,6 +207,24 @@ describe("search", () => {
     expect(video).toMatchObject({ isLive: true, lengthSeconds: undefined });
   });
 
+  test("a live result's watchers are not its view count", async () => {
+    const { ytdl } = setup({ [SEARCH]: pages(LIVE_PAGE) });
+    const [video] = await ytdl.search("NASA");
+    expect(video).toMatchObject({ isLive: true, viewCount: undefined });
+  });
+
+  test("a live badge is recognized by its style and is not one of the badges", async () => {
+    const labelled = JSON.parse(
+      JSON.stringify(LIVE_PAGE).replace(
+        '{"style":"BADGE_STYLE_TYPE_LIVE_NOW"}',
+        '{"style":"BADGE_STYLE_TYPE_LIVE_NOW","label":"LIVE"}',
+      ),
+    );
+    const { ytdl } = setup({ [SEARCH]: pages(labelled) });
+    const [video] = await ytdl.search("NASA");
+    expect(video).toMatchObject({ isLive: true, badges: [] });
+  });
+
   test("a result with no length, badge or schedule is live, and a scheduled premiere is not", async () => {
     const [liveId, premiereId] = videoIds(UNBADGED_PAGE);
     const { ytdl } = setup({ [SEARCH]: pages(UNBADGED_PAGE) });
@@ -788,6 +806,68 @@ describe("channel uploads", () => {
     expect(yt.requests.some((request) => request.url === RESOLVE)).toBe(false);
     expect(uploads).toMatchObject({ id: "UUqECaJ8Gagnn7YCbPEzWH6g", videoCount: 669, viewCount: 5_197_045 });
     expect(uploads.videos.map((video) => video.id)).toEqual(["j8pR1tyoRFc", "mw3kSNIxjqo", "BpR280fXISA"]);
+  });
+
+  test("a channel's live station is a live entry without a view count or live badge", async () => {
+    const { ytdl } = setup({ [BROWSE]: pages(UPLOADS_PAGE) });
+
+    const uploads = await ytdl.getPlaylist(CHANNEL_ID, { limit: 4 });
+    const station = uploads.videos.find((video) => video.id === "c0Y4PqvDvqc");
+
+    expect(station).toMatchObject({ isLive: true, viewCount: undefined, lengthSeconds: undefined, badges: [] });
+    expect(station?.thumbnails.length).toBeGreaterThan(0);
+  });
+
+  // Trimmed from NASA's uploads, recorded 2026-10-28; the premiere row is another channel's upcoming premiere.
+  test.each([
+    ["scheduled stream", ["12 waiting", "Scheduled for 10/29/26, 10:30 AM"]],
+    ["premiere", ["Premieres 10/31/26, 4:00 PM"]],
+  ])("an upcoming %s is upcoming without a view count or badge", async (_, row) => {
+    const lockupViewModel = {
+      contentId: "hv867HnY4j4",
+      contentType: "LOCKUP_CONTENT_TYPE_VIDEO",
+      contentImage: {
+        thumbnailViewModel: {
+          overlays: [
+            {
+              thumbnailBottomOverlayViewModel: {
+                badges: [
+                  {
+                    thumbnailBadgeViewModel: { text: "Upcoming", badgeStyle: "THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      metadata: {
+        lockupMetadataViewModel: {
+          title: { content: "U.S. Spacewalk 100" },
+          metadata: {
+            contentMetadataViewModel: {
+              metadataRows: [
+                { metadataParts: [{ text: { content: "NASA" } }] },
+                { metadataParts: row.map((content) => ({ text: { content } })) },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const page = appendedPage([{ lockupViewModel }], { metadata: { playlistMetadataRenderer: { title: "Uploads" } } });
+    const { ytdl } = setup({ [BROWSE]: pages(page) });
+
+    const [video] = (await ytdl.getPlaylist("UCLA_DiR1FfKNvjuUpBHmylQ")).videos;
+
+    expect(video).toMatchObject({
+      id: "hv867HnY4j4",
+      isUpcoming: true,
+      isLive: false,
+      viewCount: undefined,
+      lengthSeconds: undefined,
+      badges: [],
+    });
   });
 
   test.each(["", "/videos"])("a handle URL%s is resolved once, then its uploads are browsed", async (tab) => {
