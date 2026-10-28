@@ -1,5 +1,5 @@
-// YouTube rejects stale versions and device fields without notice. Values track yt-dlp
-// `yt_dlp/extractor/youtube/_base.py`.
+// YouTube rejects stale versions and device fields without notice. Device fields track yt-dlp
+// `yt_dlp/extractor/youtube/_base.py`; a web client's version is the `INNERTUBE_CLIENT_VERSION` its own page serves.
 /**
  * The InnerTube clients `Ytdl` can ask, for the `clients` option.
  * @enum
@@ -81,7 +81,7 @@ export const CLIENTS: Readonly<Record<Client, ClientDefinition>> = {
     ...base,
     name: "WEB_EMBEDDED_PLAYER",
     nameId: 56,
-    version: "2.20260708.00.00",
+    version: "2.20261027.01.00",
     userAgent: SAFARI,
     embedded: true,
   },
@@ -98,7 +98,7 @@ export const CLIENTS: Readonly<Record<Client, ClientDefinition>> = {
     ...base,
     name: "MWEB",
     nameId: 2,
-    version: "2.20260708.05.00",
+    version: "2.20261027.01.00",
     userAgent:
       "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
     poToken: true,
@@ -118,7 +118,7 @@ export const WEB: ClientDefinition = {
   ...base,
   name: "WEB",
   nameId: 1,
-  version: "2.20260708.00.00",
+  version: "2.20261027.01.00",
   userAgent: CHROME,
 };
 
@@ -126,7 +126,7 @@ export const WEB_MUSIC: ClientDefinition = {
   ...base,
   name: "WEB_REMIX",
   nameId: 67,
-  version: "1.20260707.12.00",
+  version: "1.20261025.12.00",
   userAgent: CHROME,
   origin: "https://music.youtube.com",
 };
