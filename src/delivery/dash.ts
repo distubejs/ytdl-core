@@ -17,11 +17,12 @@ function headOf(response: Response): Head | undefined {
   return { sequence, segmentMs: timeMs > 0 ? timeMs / sequence : DEFAULT_SEGMENT_MS };
 }
 
-export async function* readDashLive(
+export async function* readDash(
   session: Session,
   liveBuffer: number,
   signal: AbortSignal,
 ): AsyncGenerator<Uint8Array, void, undefined> {
+  const ended = !session.format.isLive;
   let next: number | undefined;
   let lastHead: Head | undefined;
   let freshAt = Date.now();
@@ -50,7 +51,15 @@ export async function* readDashLive(
     if (head.sequence > (lastHead?.sequence ?? 0)) lastHead = head;
     if (next === undefined) {
       response.body?.cancel().catch(ignore);
-      next = Math.max(0, head.sequence - Math.ceil(liveBuffer / head.segmentMs));
+      const behind = ended
+        ? Math.floor(((session.format.maxDvrDurationSec ?? Infinity) * 1000) / head.segmentMs)
+        : Math.ceil(liveBuffer / head.segmentMs);
+      next = Math.max(0, head.sequence - behind);
+      continue;
+    }
+    if (expired && ended) {
+      response.body?.cancel().catch(ignore);
+      next++;
       continue;
     }
     // YouTube answers 204 when the next segment does not arrive within its long-poll window.
@@ -71,6 +80,7 @@ export async function* readDashLive(
       yield bytes;
     }
     next++;
+    if (ended && next > head.sequence) return;
     freshAt = Date.now();
   }
 }

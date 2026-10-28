@@ -10,6 +10,7 @@ import { Client, Ytdl } from "../src/index.ts";
 import {
   audioFormat,
   fakeYouTube,
+  fixture,
   MEDIA_HOST,
   playable,
   REQUEST_BUDGET,
@@ -1105,6 +1106,45 @@ describe("live DASH delivery", () => {
     expect(new TextDecoder().decode(data)).toBe("17,18,19,");
     expect(idle.at(-1)! - lastSegment.at).toBeGreaterThanOrEqual(30_000);
     expect(idle.slice(1).every((at, index) => at - idle[index]! >= 10)).toBe(true);
+  });
+
+  test("an ended stream still in post-live DVR streams every segment from the first to the last, then ends", async () => {
+    const head = 3;
+    const headers = { "x-head-seqnum": String(head), "x-head-time-millis": String(head * 5000) };
+    const yt = fakeYouTube({
+      player: () => fixture("player-post-live-visionos.json"),
+      media: (url) => {
+        const sq = url.searchParams.get("sq");
+        // YouTube answered a request without `sq` with the last segment, whatever its `range`, on 2026-10-28.
+        if (sq === null) return new Response(`${head},`, { headers });
+        return Number(sq) > head ? new Response(null, { status: 204, headers }) : new Response(`${sq},`, { headers });
+      },
+    });
+
+    const { data, errors } = await collectNode(new Ytdl({ fetch: yt.fetch }).download("postliveDVR"));
+    const polledPastHead = yt.requests.filter(({ url }) => Number(new URL(url).searchParams.get("sq")) > head);
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("0,1,2,3,");
+    expect(polledPastHead).toEqual([]);
+  });
+
+  test("an ended stream whose oldest segment left the DVR window starts at the next one", async () => {
+    const head = 3;
+    const headers = { "x-head-seqnum": String(head), "x-head-time-millis": String(head * 5000) };
+    const yt = fakeYouTube({
+      player: () => fixture("player-post-live-visionos.json"),
+      media: (url) => {
+        const sq = url.searchParams.get("sq");
+        if (sq === null) return new Response(`${head},`, { headers });
+        return sq === "0" ? new Response(null, { status: 500, headers }) : new Response(`${sq},`, { headers });
+      },
+    });
+
+    const { data, errors } = await collectNode(new Ytdl({ fetch: yt.fetch }).download("postliveDVR"));
+
+    expect(errors).toEqual([]);
+    expect(new TextDecoder().decode(data)).toBe("1,2,3,");
   });
 
   test("destroying while waiting for the next segment requests nothing more", async () => {

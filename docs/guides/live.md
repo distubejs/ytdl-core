@@ -58,6 +58,8 @@ A live download [resumes](../download/#resume) like any other. An expired URL, a
 
 The stream ends when the HLS playlist says the broadcast is over, or when no new segment arrives for 30 seconds. Both end the stream normally. To keep recording through a long stall, call `getInfo` again and start a new download while `videoDetails.isLive` is true.
 
+A stream that just ended stays in its DVR window until YouTube turns it into a regular video. Its `videoDetails.isLive` is false, and a download reads the window from its oldest segment to the newest, then ends.
+
 ## Record to a file
 
 An HLS format sends MPEG-TS with audio and video together. ffmpeg remuxes it without re-encoding:

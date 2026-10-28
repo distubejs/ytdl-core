@@ -5,7 +5,7 @@ import { ignore } from "../http.ts";
 import type { ChooseFormatOptions, VideoFormat } from "../formats.ts";
 import type { VideoInfo } from "../info.ts";
 import type { LookupOptions } from "../ytdl.ts";
-import { readDashLive } from "./dash.ts";
+import { readDash } from "./dash.ts";
 import { readLive } from "./hls.ts";
 import { readSabr } from "./sabr.ts";
 import { readBody, Session } from "./session.ts";
@@ -135,8 +135,9 @@ async function* generate(
     const session = new Session(delivery, playback, options, signal);
     const liveBuffer = options.liveBuffer ?? DEFAULT_LIVE_BUFFER_MS;
     if (playback.format.isHLS) yield* readLive(session, liveBuffer, signal);
-    else if (playback.format.isLive) yield* readDashLive(session, liveBuffer, signal);
-    else yield* readFile(session, options, signal);
+    else if (playback.format.isLive || playback.format.targetDurationSec !== undefined) {
+      yield* readDash(session, liveBuffer, signal);
+    } else yield* readFile(session, options, signal);
   } catch (error) {
     signal.throwIfAborted();
     throw error;
