@@ -593,7 +593,15 @@ export async function musicRadio(
 ): Promise<VideoSummary[]> {
   const visitorData = await innertube.visitorData(signal);
   const page = await innertube.musicRadio(videoId, `RDAMVM${seed}`, visitorData, signal);
-  const entries = collect(page, "playlistPanelVideoRenderer").flatMap((entry) => radioSummary(entry) ?? []);
+  const entries = collect(page, "playlistPanelRenderer")
+    .flatMap((panel) => list(at(panel, "contents")))
+    .flatMap((item) => {
+      const entry =
+        at(item, "playlistPanelVideoRenderer") ??
+        at(item, "playlistPanelVideoWrapperRenderer", "primaryRenderer", "playlistPanelVideoRenderer");
+      const song = isRecord(entry) ? radioSummary(entry) : undefined;
+      return song ? [song] : [];
+    });
   return withoutRepeats(entries, new Set([videoId]));
 }
 

@@ -418,6 +418,26 @@ describe("music radio", () => {
     expect(radio.map((song) => song.id)).not.toContain("_rh4iAZdLdU");
     expect(radio.length).toBe(radioIds(RADIO).length - 1);
   });
+
+  test("a song wrapped with its music-video counterpart is one entry", async () => {
+    type Entry = { readonly playlistPanelVideoRenderer: Record<string, unknown> };
+    const wrapped = ({ playlistPanelVideoRenderer: entry }: Entry) => ({
+      playlistPanelVideoWrapperRenderer: {
+        primaryRenderer: { playlistPanelVideoRenderer: { ...entry, videoId: "songATV0001" } },
+        counterpart: [{ counterpartRenderer: { playlistPanelVideoRenderer: { ...entry, videoId: "videoOMV001" } } }],
+      },
+    });
+    const answer = JSON.parse(JSON.stringify(RADIO), (key, value: { readonly contents: readonly Entry[] }) =>
+      key === "playlistPanelRenderer"
+        ? { ...value, contents: value.contents.map((entry, index) => (index === 1 ? wrapped(entry) : entry)) }
+        : value,
+    );
+    const { ytdl } = setup({ [MUSIC_NEXT]: pages(answer) });
+
+    const radio = await ytdl.getRelated(RADIO_SEED, { music: true });
+
+    expect(radio.map((song) => song.id)).toEqual(["songATV0001", ...radioIds(RADIO).slice(2)]);
+  });
 });
 
 describe("discovery arguments", () => {
