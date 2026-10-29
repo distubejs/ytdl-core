@@ -182,6 +182,7 @@ function videoDetails(player: Json, next: Json, context: DetailsContext): VideoD
   const id = str(at(details, "videoId")) ?? "";
   const countries = at(micro, "availableCountries");
   const keywords = at(details, "keywords");
+  const familySafe = at(micro, "isFamilySafe");
   return {
     id,
     url: `https://www.youtube.com/watch?v=${id}`,
@@ -199,8 +200,8 @@ function videoDetails(player: Json, next: Json, context: DetailsContext): VideoD
     isLive: at(details, "isLive") === true,
     isUpcoming: at(details, "isUpcoming") === true,
     isUnlisted: typeof at(micro, "isUnlisted") === "boolean" ? (at(micro, "isUnlisted") as boolean) : undefined,
-    isFamilySafe: typeof at(micro, "isFamilySafe") === "boolean" ? (at(micro, "isFamilySafe") as boolean) : undefined,
-    isAgeRestricted: context.ageRestricted,
+    isFamilySafe: typeof familySafe === "boolean" ? familySafe : undefined,
+    isAgeRestricted: context.ageRestricted || familySafe === false,
     availableCountries: Array.isArray(countries)
       ? countries.filter((c): c is string => typeof c === "string")
       : undefined,

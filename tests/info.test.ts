@@ -115,6 +115,13 @@ describe("getInfo details", () => {
     expect(details.author.verified).toBeUndefined();
   });
 
+  test("a video the first client plays is age-restricted when it is not family safe", async () => {
+    const adult = { microformat: { playerMicroformatRenderer: { isFamilySafe: false } } };
+    const yt = fakeYouTube({ player: () => playable(ID, undefined, adult), next: {} });
+    const details = (await new Ytdl({ fetch: yt.fetch }).getInfo(ID)).videoDetails;
+    expect(details).toMatchObject({ isFamilySafe: false, isAgeRestricted: true });
+  });
+
   test("chapters come from the macro markers panel", async () => {
     const yt = fakeYouTube({ player: () => playable(ID), next: { panels: [marker("Intro", 0), marker("Verse", 75)] } });
     const details = (await new Ytdl({ fetch: yt.fetch }).getInfo(ID)).videoDetails;
