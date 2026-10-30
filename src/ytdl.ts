@@ -17,6 +17,7 @@ import {
   fetchMusicSuggestions,
   fetchSuggestions,
   musicRadio,
+  musicSong,
   relatedVideos,
   SearchType,
   searchPlaylists,
@@ -274,6 +275,16 @@ export class Ytdl {
     if (music) return musicRadio(this.#innertube, id, radioSeed ?? id, options.signal);
     const visitor = await this.#innertube.visitorData(options.signal);
     return relatedVideos(await this.#innertube.next(id, visitor, options.signal));
+  }
+
+  /**
+   * The video as YouTube Music lists it, from one `next` request and no player lookup: its title, its artists as
+   * `author`, its listed length and YouTube Music's art. Rejects `NOT_FOUND` when YouTube Music lists no entry for it.
+   * Takes the same input as {@link getInfo}.
+   */
+  async getSong(video: string, options: LookupOptions = {}): Promise<VideoSummary> {
+    const id = await this.#videoId(getVideoTarget(video), options.signal);
+    return musicSong(this.#innertube, id, options.signal);
   }
 
   /**

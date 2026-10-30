@@ -77,6 +77,18 @@ const songs = await yt.search("kevin macleod", { type: SearchType.Song, limit: 3
 
 Albums, artists, playlists and music videos are left out. A song's `id` is an ordinary video ID, so `getInfo` and `download` play it.
 
+### One song as YouTube Music lists it
+
+```ts
+import { Ytdl } from "@distube/ytdl-core";
+
+declare const yt: Ytdl;
+
+const song = await yt.getSong("https://music.youtube.com/watch?v=4jTzgLFd5_4");
+```
+
+`getInfo` names the uploading channel, which for most songs is an auto-generated `Artist - Topic` channel, and lists 16:9 video frames. `getSong` returns the same video as a `VideoSummary` the way YouTube Music lists it: the artists as `author`, its listed length and YouTube Music's square art, with no `viewCount`. It sends one request and looks up no formats. It takes the same input as `getInfo` and rejects `NOT_FOUND` when YouTube Music lists no entry for the video.
+
 ## Related videos
 
 ```ts

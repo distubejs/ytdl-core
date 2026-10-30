@@ -17,7 +17,8 @@ import { fakeYouTube, fixture, playable } from "./fake-youtube.ts";
 // data and onesie URLs are gone, and the search continuation tokens, which encode third-party IDs, are replaced by labels.
 // Recorded 2026-10-28 from YouTube Music's WEB_REMIX without visitor data: song search for "kevin macleod", both pages, its
 // one third-party row relabelled; a two-artist explicit row from another song search, relabelled; suggestions for
-// "kevin macl"; the radio of 4jTzgLFd5_4 (Kevin MacLeod, CC BY), its third-party entries relabelled.
+// "kevin macl"; the radio of 4jTzgLFd5_4 (Kevin MacLeod, CC BY), its third-party entries relabelled. Recorded 2026-10-30
+// from WEB_REMIX with visitor data: the next answer for the well-formed unknown ID aaaaaaaaaaa, its queue header only.
 const SEARCH_PAGE = fixture("search-web.json");
 const SEARCH_NEXT_PAGE = fixture("search-continuation-web.json");
 const MIXED_PAGE = fixture("search-mixed-web.json");
@@ -42,6 +43,7 @@ const SONGS_NEXT_PAGE = fixture("search-songs-continuation-music.json");
 const SONG_BADGES_PAGE = fixture("search-songs-badges-music.json");
 const MUSIC_SUGGESTIONS = fixture("suggest-music.json");
 const RADIO = fixture("next-radio-music.json");
+const MISSING_SONG = fixture("next-missing-music.json");
 const RADIO_SEED = "4jTzgLFd5_4";
 
 const SEARCH = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
@@ -437,6 +439,32 @@ describe("music radio", () => {
     const radio = await ytdl.getRelated(RADIO_SEED, { music: true });
 
     expect(radio.map((song) => song.id)).toEqual(["songATV0001", ...radioIds(RADIO).slice(2)]);
+  });
+});
+
+describe("music song", () => {
+  test("one next request with no player request returns the video as YouTube Music lists it", async () => {
+    const { yt, ytdl, bodies } = setup({ [MUSIC_NEXT]: pages(RADIO) });
+
+    const song = await ytdl.getSong(`https://music.youtube.com/watch?v=${RADIO_SEED}`);
+
+    expect(song).toMatchObject({ id: RADIO_SEED, title: "Clear Air - Somewhere Sunny", lengthSeconds: 184 });
+    expect(song.author).toMatchObject({ id: "UCBqb0wSlWVFBnSuTI3Tcxig", name: "Kevin MacLeod" });
+    expect(song.thumbnails.length).toBeGreaterThan(0);
+    for (const { url, width, height } of song.thumbnails) {
+      expect(new URL(url).hostname).toEndWith(".googleusercontent.com");
+      expect(width).toBe(height);
+    }
+    expect(bodies(MUSIC_NEXT)).toMatchObject([
+      { videoId: RADIO_SEED, context: { client: { clientName: "WEB_REMIX" } } },
+    ]);
+    expect(yt.playerCalls).toHaveLength(0);
+  });
+
+  test("an answer that lists no entry for the video rejects NOT_FOUND", async () => {
+    const { ytdl } = setup({ [MUSIC_NEXT]: pages(MISSING_SONG) });
+
+    expect((await rejection(ytdl.getSong("aaaaaaaaaaa"))).code).toBe(YtdlErrorCode.NOT_FOUND);
   });
 });
 

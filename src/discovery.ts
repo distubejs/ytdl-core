@@ -585,7 +585,7 @@ export const searchSongs = (innertube: InnerTube, query: string, request: Search
     request,
   );
 
-export async function musicRadio(
+async function radioEntries(
   innertube: InnerTube,
   videoId: string,
   seed: string,
@@ -593,7 +593,7 @@ export async function musicRadio(
 ): Promise<VideoSummary[]> {
   const visitorData = await innertube.visitorData(signal);
   const page = await innertube.musicRadio(videoId, `RDAMVM${seed}`, visitorData, signal);
-  const entries = collect(page, "playlistPanelRenderer")
+  return collect(page, "playlistPanelRenderer")
     .flatMap((panel) => list(at(panel, "contents")))
     .flatMap((item) => {
       const entry =
@@ -602,7 +602,25 @@ export async function musicRadio(
       const song = isRecord(entry) ? radioSummary(entry) : undefined;
       return song ? [song] : [];
     });
-  return withoutRepeats(entries, new Set([videoId]));
+}
+
+export async function musicRadio(
+  innertube: InnerTube,
+  videoId: string,
+  seed: string,
+  signal: AbortSignal | undefined,
+): Promise<VideoSummary[]> {
+  return withoutRepeats(await radioEntries(innertube, videoId, seed, signal), new Set([videoId]));
+}
+
+export async function musicSong(
+  innertube: InnerTube,
+  videoId: string,
+  signal: AbortSignal | undefined,
+): Promise<VideoSummary> {
+  const song = (await radioEntries(innertube, videoId, videoId, signal)).find((entry) => entry.id === videoId);
+  if (!song) throw new YtdlError("NOT_FOUND", `YouTube Music lists no song ${videoId}`);
+  return song;
 }
 
 export async function fetchMusicSuggestions(
