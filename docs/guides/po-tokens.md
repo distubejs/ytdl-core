@@ -5,7 +5,7 @@ sidebar:
   order: 13
 ---
 
-Some [clients](../clients/), mweb and web_creator, only play with a proof-of-origin (PO) token. `Ytdl` mints one for them with no setup, and one for every SABR session.
+Some [clients](../clients/), mweb, web_creator and web_music, only play with a proof-of-origin (PO) token. `Ytdl` mints one for them with no setup, and one for every SABR session.
 
 ## Built-in provider
 
@@ -16,7 +16,7 @@ Without `getPoToken`, each `Ytdl` instance starts its own provider the first tim
 - There is nothing to dispose. The idle worker does not keep your process running.
 - The instance holds its worker until the process exits, so create one `Ytdl` per account or network identity, not one per request.
 
-To keep the worker from starting at all, leave mweb and web_creator out of `clients`. A SABR download still starts one.
+To keep the worker from starting at all, leave mweb, web_creator and web_music out of `clients`. A SABR download still starts one.
 
 ## Sharing or disposing a provider
 

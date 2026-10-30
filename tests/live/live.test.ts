@@ -426,6 +426,15 @@ describe.skipIf(!LIVE)("real YouTube", () => {
   );
 
   test(
+    "the WEB_MUSIC rung plays a song past its first MiB through the built-in PO token provider",
+    async () => {
+      const info = await plays("web_music", new Ytdl({ clients: [Client.WebMusic] }), MUSIC_SONG, [0, 0.9]);
+      expect(info.client).toBe("web_music");
+    },
+    TIMEOUT,
+  );
+
+  test(
     "SABR on MWEB with a PO token matches the direct bytes",
     async () => {
       const provider = await createPoTokenProvider();

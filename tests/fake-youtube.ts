@@ -54,7 +54,7 @@ export function fakeYouTube(options: FakeOptions) {
         `ytcfg.set({"VISITOR_DATA":"EMBED-VISITOR","WEB_PLAYER_CONTEXT_CONFIGS":{"WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER":{"encryptedHostFlags":"HOST-FLAGS"}}});`,
       );
     }
-    if (url.startsWith("https://www.youtube.com/youtubei/v1/player")) {
+    if (/^https:\/\/(?:www|music)\.youtube\.com\/youtubei\/v1\/player/u.test(url)) {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const context = body.context as { client: { clientName: string } };
       const call = {
@@ -85,6 +85,7 @@ export const VISIONOS = "VISIONOS";
 export const TV = "TVHTML5";
 export const WEB_EMBEDDED = "WEB_EMBEDDED_PLAYER";
 export const MWEB = "MWEB";
+export const WEB_REMIX = "WEB_REMIX";
 
 const details = (videoId: string, extra: Record<string, unknown> = {}) => ({
   videoId,

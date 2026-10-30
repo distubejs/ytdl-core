@@ -15,6 +15,8 @@ export const Client = {
   Mweb: "mweb",
   /** YouTube Studio. Needs a cookie and a PO token. */
   WebCreator: "web_creator",
+  /** YouTube Music website. Needs a PO token; plays songs, not other videos. */
+  WebMusic: "web_music",
 } as const;
 
 export type Client = (typeof Client)[keyof typeof Client];
@@ -26,6 +28,7 @@ export const DEFAULT_CLIENTS: readonly Client[] = [
   Client.Tv,
   Client.Mweb,
   Client.WebCreator,
+  Client.WebMusic,
 ];
 
 export interface ClientDefinition {
@@ -64,6 +67,17 @@ export function userAgentHeader(client: Client | ClientDefinition): Readonly<Rec
   const { userAgent } = typeof client === "string" ? CLIENTS[client] : client;
   return userAgent ? { "User-Agent": userAgent } : {};
 }
+
+export const WEB_MUSIC: ClientDefinition = {
+  ...base,
+  name: "WEB_REMIX",
+  nameId: 67,
+  version: "1.20261025.12.00",
+  userAgent: CHROME,
+  origin: "https://music.youtube.com",
+  poToken: true,
+  account: "none",
+};
 
 export const CLIENTS: Readonly<Record<Client, ClientDefinition>> = {
   visionos: {
@@ -112,6 +126,7 @@ export const CLIENTS: Readonly<Record<Client, ClientDefinition>> = {
     poToken: true,
     account: "required",
   },
+  web_music: WEB_MUSIC,
 };
 
 export const WEB: ClientDefinition = {
@@ -120,13 +135,4 @@ export const WEB: ClientDefinition = {
   nameId: 1,
   version: "2.20261027.01.00",
   userAgent: CHROME,
-};
-
-export const WEB_MUSIC: ClientDefinition = {
-  ...base,
-  name: "WEB_REMIX",
-  nameId: 67,
-  version: "1.20261025.12.00",
-  userAgent: CHROME,
-  origin: "https://music.youtube.com",
 };

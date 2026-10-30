@@ -13,15 +13,16 @@ import { Client, Ytdl } from "@distube/ytdl-core";
 const yt = new Ytdl({ clients: [Client.WebEmbedded, Client.Tv] });
 ```
 
-`Client` lists only the clients that played a video when asked alone. `DEFAULT_CLIENTS` is all five in this order: `visionos`, `web_embedded`, `tv`, `mweb` and `web_creator`. An unknown name, such as a 4.x client like `"android"`, throws `INVALID_ARGUMENT`.
+`Client` lists only the clients that played a video when asked alone. `DEFAULT_CLIENTS` is all six in this order: `visionos`, `web_embedded`, `tv`, `mweb`, `web_creator` and `web_music`. An unknown name, such as a 4.x client like `"android"`, throws `INVALID_ARGUMENT`.
 
-- mweb and web_creator need a [PO token](../po-tokens/), which the instance mints itself unless you pass `getPoToken`.
+- mweb, web_creator and web_music need a [PO token](../po-tokens/), which the instance mints itself unless you pass `getPoToken`.
+- web_music is the YouTube Music website. It plays songs and music live streams and answers "Video unavailable" for other videos, so it comes last. It has no signed-in attempt.
 - With a [cookie](../cookies/), a client that accepts one is asked again signed in, right after its signed-out request. web_creator is only asked signed in.
 - A client whose media URLs keep failing counts as blocked for ten minutes and moves to the end of the list.
 
 ## What each client plays
 
-The signed-out table comes from a run of one client at a time on 2026-10-21, over one to three videos per class. Cells are ✅ when `getInfo` returned a playable format for every video, ❌ when it did for none, and "some" when the result depended on the video. The signed-in table comes from a cookie run on 2026-10-22 and is narrower, see below.
+The signed-out table comes from a run of one client at a time on 2026-10-21, over one to three videos per class. The web_music row comes from a run on 2026-10-30 over three normal, one made-for-kids and two age-restricted videos and one music live stream. It also played the Creative Commons song `4jTzgLFd5_4`. Cells are ✅ when `getInfo` returned a playable format for every video, ❌ when it did for none, and "some" when the result depended on the video. The signed-in table comes from a cookie run on 2026-10-22 and is narrower, see below.
 
 Without a cookie:
 
@@ -31,6 +32,7 @@ Without a cookie:
 | web_embedded |   ✅   |      some      |      ✅       |         ❌         |    ✅    |    ✅     |
 | tv           |   ✅   |       ❌       |      ✅       |         ✅         |    ❌    |    ✅     |
 | mweb         |   ✅   |       ❌       |      ✅       |         ✅         |    ✅    |    ✅     |
+| web_music    |   ❌   |       ❌       |      ❌       |    not measured    |    ✅    |    ✅     |
 
 - web_embedded played one of two age-restricted videos and reported `AGE_RESTRICTED` for the other. Pass a [cookie](../cookies/) when age-restricted videos matter.
 - visionos answers a made-for-kids video with no formats, so ytdl-core moves on to web_embedded.

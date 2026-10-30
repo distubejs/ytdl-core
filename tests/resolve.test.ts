@@ -17,6 +17,7 @@ import {
   VISIONOS,
   visitorBody,
   WEB_EMBEDDED,
+  WEB_REMIX,
 } from "./fake-youtube.ts";
 
 const ID = "aqz-KE-bpKQ";
@@ -94,6 +95,29 @@ describe("client order", () => {
     expect(new URL(info.formats[0]?.url ?? "").searchParams.get("pot")).toBe("POTOKEN-for-test");
   });
 
+  test("a song no earlier default client plays comes from YouTube Music with the player and a PO token", async () => {
+    const yt = fakeYouTube({
+      player: ({ client }) => (client === WEB_REMIX ? ciphered(ID) : unplayable("UNPLAYABLE", "")),
+    });
+    const info = await new Ytdl({
+      fetch: yt.fetch,
+      playerId: PLAYER_ID,
+      getPoToken: async () => "POTOKEN-for-test",
+    }).getInfo(ID);
+
+    expect(yt.clients()).toEqual([VISIONOS, WEB_EMBEDDED, TV, MWEB, WEB_REMIX]);
+    expect(info.client).toBe("web_music");
+    const music = yt.playerCalls.find((call) => call.client === WEB_REMIX);
+    expect(yt.requests.some(({ url }) => url.startsWith("https://music.youtube.com/youtubei/v1/player"))).toBe(true);
+    expect(music?.body.playbackContext).toEqual({
+      contentPlaybackContext: { html5Preference: "HTML5_PREF_WANTS", signatureTimestamp: SIGNATURE_TIMESTAMP },
+    });
+    expect(music?.body.serviceIntegrityDimensions).toEqual({ poToken: "POTOKEN-for-test" });
+    const url = new URL(info.formats[0]?.url ?? "");
+    expect(url.searchParams.get("sig")).toBe("edcba");
+    expect(url.searchParams.get("pot")).toBe("POTOKEN-for-test");
+  });
+
   test("a failing hook fails its rung without hiding earlier outcomes", async () => {
     const yt = fakeYouTube({ player: () => unplayable("LOGIN_REQUIRED", "Sign in to confirm your age") });
     const error = await rejection(
@@ -113,7 +137,7 @@ describe("client order", () => {
   });
 
   test("account rungs exist only with a cookie", () => {
-    expect(order(false)).toEqual(["visionos", "web_embedded", "tv", "mweb"]);
+    expect(order(false)).toEqual(["visionos", "web_embedded", "tv", "mweb", "web_music"]);
     expect(order(true)).toEqual([
       "visionos",
       "web_embedded",
@@ -123,6 +147,7 @@ describe("client order", () => {
       "mweb",
       "mweb+",
       "web_creator+",
+      "web_music",
     ]);
   });
 
